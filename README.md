@@ -19,6 +19,7 @@ Em outro terminal, rode `npm run dev:api`. O Vite encaminha `/api` para o Expres
 
 ```powershell
 npm run build
+$env:NODE_ENV = 'production'
 $env:APP_ORIGIN = 'https://nexo.example'
 $env:DATABASE_PATH = Join-Path (Get-Location) 'data/nexo.sqlite'
 $env:SESSION_SECRET = node -p "require('node:crypto').randomBytes(32).toString('hex')"
@@ -27,7 +28,7 @@ npm start
 
 Abra `http://localhost:3000`. O Express serve `web/dist/`, inclusive ao abrir uma rota diretamente pelo navegador. Uma rota desconhecida em `/api` devolve 404 em JSON. Execute `npm run lint` para verificar o código.
 
-O exemplo usa configuração descartável para testar o build via HTTP local. A origem HTTPS configura o endereço público para uso futuro com proxy HTTPS.
+O exemplo usa configuração descartável para testar o build via HTTP local. A origem HTTPS configura o endereço público para uso futuro com proxy HTTPS. Use um novo terminal para voltar aos padrões de desenvolvimento.
 
 ## Configuração
 
@@ -39,7 +40,11 @@ O exemplo usa configuração descartável para testar o build via HTTP local. A 
 | `DATABASE_PATH` | Caminho do arquivo SQLite. Em produção é absoluto e deve ficar em um diretório persistente. O padrão local é `data/nexo.sqlite`. |
 | `SESSION_SECRET` | Segredo obrigatório em produção. Mantenha o valor privado e estável entre reinícios. |
 
-Execute `npm test` para validar a configuração e as rotas. `npm run migrate` informa que a migração aguarda a tarefa 2.1.
+## Banco local e migrações
+
+Na raiz, execute `npm run migrate` para aplicar as migrações ao banco configurado. Na primeira execução com banco vazio, o comando aplica o esquema inicial. Ao rodar novamente, o resultado é `Migrações aplicadas: 0.`
+
+O servidor também aplica migrações pendentes antes de aceitar requisições. As migrações SQL ficam em `api/migrations/`. Execute `npm test` para verificar configuração, rotas e persistência em bancos temporários.
 
 - `web/` contém a interface React e a configuração Vite.
 - `api/` contém a aplicação Express.
