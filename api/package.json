@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js --production"
+    "start": "node src/server.js --production",
+    "migrate": "node src/migrate.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express": "5.3.0"

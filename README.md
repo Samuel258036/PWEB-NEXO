@@ -19,10 +19,27 @@ Em outro terminal, rode `npm run dev:api`. O Vite encaminha `/api` para o Expres
 
 ```powershell
 npm run build
+$env:APP_ORIGIN = 'https://nexo.example'
+$env:DATABASE_PATH = Join-Path (Get-Location) 'data/nexo.sqlite'
+$env:SESSION_SECRET = node -p "require('node:crypto').randomBytes(32).toString('hex')"
 npm start
 ```
 
 Abra `http://localhost:3000`. O Express serve `web/dist/`, inclusive ao abrir uma rota diretamente pelo navegador. Uma rota desconhecida em `/api` devolve 404 em JSON. Execute `npm run lint` para verificar o código.
+
+O exemplo usa configuração descartável para testar o build via HTTP local. A origem HTTPS configura o endereço público para uso futuro com proxy HTTPS.
+
+## Configuração
+
+| Variável | Uso |
+| --- | --- |
+| `NODE_ENV` | Aceita `development`, `test` e `production`. `npm start` assume `production` e `npm run dev:api` assume `development`. |
+| `PORT` | Porta do Express, com padrão 3000. Se alterada em desenvolvimento, use o mesmo valor nos terminais do Express e do Vite. |
+| `APP_ORIGIN` | Origem pública. Exige HTTPS em produção e usa `http://localhost:5173` por padrão no desenvolvimento. |
+| `DATABASE_PATH` | Caminho do arquivo SQLite. Em produção é absoluto e deve ficar em um diretório persistente. O padrão local é `data/nexo.sqlite`. |
+| `SESSION_SECRET` | Segredo obrigatório em produção. Mantenha o valor privado e estável entre reinícios. |
+
+Execute `npm test` para validar a configuração e as rotas. `npm run migrate` informa que a migração aguarda a tarefa 2.1.
 
 - `web/` contém a interface React e a configuração Vite.
 - `api/` contém a aplicação Express.

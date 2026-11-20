@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Ambiente e dados do Nexo
+.env
+.env.*
+/data/
+*.sqlite
+*.sqlite-*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
