@@ -27,6 +27,7 @@ try {
     sessionSecret: config.sessionSecret,
     secureCookie: config.production,
     trustProxyHops: config.trustProxyHops,
+    appOrigin: config.appOrigin,
   })
   const host = config.production ? undefined : '127.0.0.1'
   const server = app.listen(config.port, host, () => {

@@ -18,6 +18,7 @@ async function createFixture(context) {
   const server = createServer(app)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
+  app.locals.appOrigin = `http://127.0.0.1:${address.port}`
 
   context.after(async () => {
     await new Promise((resolve) => server.close(resolve))
@@ -38,6 +39,17 @@ async function request(origin, path, { method = 'GET', body, cookie } = {}) {
     headers.cookie = cookie
   }
 
+  headers.origin = origin
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const session = await fetch(`${origin}/api/auth/session`, { headers: cookie ? { cookie } : {} })
+    const sessionBody = await session.json()
+    headers['x-csrf-token'] = sessionBody.csrfToken
+    if (!cookie) {
+      cookie = session.headers.get('set-cookie')?.split(';')[0]
+      if (cookie) headers.cookie = cookie
+    }
+  }
+
   const response = await fetch(`${origin}${path}`, {
     method,
     headers,
@@ -50,6 +62,7 @@ async function request(origin, path, { method = 'GET', body, cookie } = {}) {
     status: response.status,
     body: responseBody,
     cookie: setCookie ? setCookie.split(';')[0] : null,
+    retryAfter: response.headers.get('retry-after'),
   }
 }
 
@@ -85,6 +98,46 @@ test('session e identify reconhecem nomes equivalentes sem criar conta', async (
   assert.deepEqual(existing.body, { state: 'existing' })
   assert.deepEqual(unknown.body, { state: 'new' })
   assert.equal(database.prepare('SELECT count(*) AS count FROM users').get().count, 1)
+})
+
+test('segurança adiciona Helmet, limite de autenticação e máximo de 2 MiB', async (context) => {
+  const { origin } = await createFixture(context)
+  const session = await request(origin, '/api/auth/session')
+  const response = await fetch(`${origin}/api/auth/identify`, {
+    method: 'POST',
+    headers: {
+      origin,
+      cookie: session.cookie,
+      'content-type': 'application/json',
+      'x-csrf-token': session.body.csrfToken,
+    },
+    body: JSON.stringify({ username: 'ana' }),
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+  assert.equal(response.headers.get('x-frame-options'), 'SAMEORIGIN')
+
+  let lastResponse
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    lastResponse = await request(origin, '/api/auth/identify', {
+      method: 'POST', body: { username: 'ana' }, cookie: session.cookie,
+    })
+  }
+  assert.equal(lastResponse.status, 429)
+  assert.equal(lastResponse.body.error.code, 'RATE_LIMITED')
+  assert.ok(Number(lastResponse.retryAfter) >= 0)
+
+  const oversized = await fetch(`${origin}/api/auth/identify`, {
+    method: 'POST',
+    headers: {
+      origin,
+      cookie: session.cookie,
+      'content-type': 'application/json',
+      'x-csrf-token': session.body.csrfToken,
+    },
+    body: JSON.stringify({ username: 'x'.repeat(2 * 1024 * 1024 + 1) }),
+  })
+  assert.equal(oversized.status, 413)
 })
 
 test('cadastro ausente ou sem confirmação não cria uma conta', async (context) => {

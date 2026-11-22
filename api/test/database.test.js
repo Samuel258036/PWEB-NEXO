@@ -116,6 +116,7 @@ test('um esquema incompatível impede o servidor de abrir a porta', (context) =>
       NODE_ENV: 'test',
       PORT: '49383',
       APP_ORIGIN: 'http://localhost:5173',
+      SESSION_SECRET: 'segredo-estavel-para-testes-de-banco',
       DATABASE_PATH: path,
     },
     encoding: 'utf8',

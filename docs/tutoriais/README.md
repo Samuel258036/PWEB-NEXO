@@ -10,3 +10,4 @@
 - [3.1. Derivar e verificar senhas](define-puzzle-platform-mvp/3.1.md)
 - [3.2. Guardar sessões no SQLite](define-puzzle-platform-mvp/3.2.md)
 - [3.3. Identificar, cadastrar e entrar](define-puzzle-platform-mvp/3.3.md)
+- [3.4. Proteger as requisições](define-puzzle-platform-mvp/3.4.md)
