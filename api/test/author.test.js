@@ -88,6 +88,29 @@ test('rascunho salva snapshot com IDs estáveis, renomeia e ordena etapas', asyn
   assert.equal(rejected.status, 404)
 })
 
+test('publicação exige snapshot completo e congela a estrutura do rascunho', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const draft = await authorRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Publicável' })
+  const puzzleId = draft.body.puzzle.id
+  const emptyPublish = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', { expectedVersion: 1 })
+  assert.equal(emptyPublish.status, 400)
+  assert.equal(emptyPublish.body.error.code, 'DRAFT_INCOMPLETE')
+
+  const snapshot = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Publicável', version: 1, steps: [{ prompt: 'Enunciado', answer: 'resposta' }],
+  })
+  const published = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', { expectedVersion: snapshot.body.puzzle.version })
+  assert.equal(published.status, 200)
+  assert.equal(published.body.puzzle.status, 'published')
+  assert.ok(published.body.puzzle.published_at)
+
+  const mutation = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Publicável', version: published.body.puzzle.version, steps: [],
+  })
+  assert.equal(mutation.status, 404)
+})
+
 test('autor lista, cria e retoma rascunho; outra conta não lê seu conteúdo', async (context) => {
   const { origin } = await setup(context)
   const author = await login(origin, 'autora')

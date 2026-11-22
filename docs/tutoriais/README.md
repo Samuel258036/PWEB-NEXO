@@ -13,3 +13,4 @@
 - [3.4. Proteger as requisições](define-puzzle-platform-mvp/3.4.md)
 - [4.1. Criar e retomar rascunhos](define-puzzle-platform-mvp/4.1.md)
 - [4.2. Salvar e ordenar um rascunho](define-puzzle-platform-mvp/4.2.md)
+- [4.3. Publicar um enigma](define-puzzle-platform-mvp/4.3.md)

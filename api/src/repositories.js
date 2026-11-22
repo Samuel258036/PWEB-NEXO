@@ -79,6 +79,8 @@ export function createRepositories(database) {
   const updateDraftStep = database.prepare(`UPDATE steps SET position = ?, prompt = ?, answer_text = ?, answer_key = ? WHERE id = ? AND puzzle_id = ?`)
   const deleteUnlistedDraftSteps = database.prepare(`DELETE FROM steps WHERE puzzle_id = ? AND id NOT IN (SELECT value FROM json_each(?))`)
   const updateDraftSnapshot = database.prepare(`UPDATE puzzles SET name_display = ?, name_key = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
+  const readDraftForPublish = database.prepare(`SELECT puzzles.id, puzzles.version, puzzles.status, puzzles.final_message, COUNT(steps.id) AS step_count, SUM(CASE WHEN trim(steps.prompt) = '' OR trim(steps.answer_text) = '' THEN 1 ELSE 0 END) AS incomplete_steps FROM puzzles LEFT JOIN steps ON steps.puzzle_id = puzzles.id WHERE puzzles.id = ? AND puzzles.author_id = ? GROUP BY puzzles.id`)
+  const publishDraft = database.prepare(`UPDATE puzzles SET status = 'published', published_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
   const incrementPuzzleVersion = database.prepare(`
     UPDATE puzzles
     SET version = version + 1,
@@ -179,6 +181,22 @@ export function createRepositories(database) {
           deleteUnlistedDraftSteps.run(puzzleId, JSON.stringify(savedIds))
           const changed = updateDraftSnapshot.run(nameDisplay, nameKey, puzzleId, authorId, expectedVersion)
           if (changed.changes !== 1) throw new VersionConflictError()
+          return this.readForAuthor(puzzleId, authorId)
+        })
+      },
+      publish({ puzzleId, authorId, expectedVersion }) {
+        return runInImmediateTransaction(database, () => {
+          const puzzle = readDraftForPublish.get(puzzleId, authorId)
+          if (!puzzle) throw new RepositoryReferenceError('publicar o enigma')
+          if (puzzle.status !== 'draft') throw new RepositoryReferenceError('publicar um rascunho')
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          if (puzzle.step_count < 1 || puzzle.incomplete_steps > 0) {
+            const error = new Error('Adicione ao menos uma etapa completa antes de publicar.')
+            error.code = 'DRAFT_INCOMPLETE'
+            throw error
+          }
+          const result = publishDraft.run(puzzleId, authorId, expectedVersion)
+          if (result.changes !== 1) throw new VersionConflictError()
           return this.readForAuthor(puzzleId, authorId)
         })
       },

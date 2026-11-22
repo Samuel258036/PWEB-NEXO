@@ -102,5 +102,29 @@ export function createAuthorRouter({ repositories }) {
     }
   })
 
+  router.post('/puzzles/:id/publish', (request, response) => {
+    const puzzleId = Number(request.params.id)
+    const expectedVersion = request.body?.expectedVersion
+    if (!Number.isSafeInteger(puzzleId) || puzzleId < 1 || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      sendError(response, 400, 'INVALID_VERSION', 'Informe o ID e a versão atual do rascunho.')
+      return
+    }
+
+    try {
+      const puzzle = repositories.puzzles.publish({ puzzleId, authorId: request.session.userId, expectedVersion })
+      response.json({ puzzle })
+    } catch (error) {
+      if (error instanceof RepositoryReferenceError) {
+        sendError(response, 404, error.code, error.message)
+      } else if (error instanceof VersionConflictError) {
+        sendError(response, 409, error.code, error.message)
+      } else if (error.code === 'DRAFT_INCOMPLETE') {
+        sendError(response, 400, error.code, error.message)
+      } else {
+        throw error
+      }
+    }
+  })
+
   return router
 }
