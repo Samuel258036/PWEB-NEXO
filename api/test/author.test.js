@@ -30,7 +30,7 @@ async function setup(context) {
     database.close()
     rmSync(directory, { recursive: true, force: true })
   })
-  return { origin, accounts }
+  return { origin, accounts, database }
 }
 
 async function login(origin, username) {
@@ -109,6 +109,36 @@ test('publicação exige snapshot completo e congela a estrutura do rascunho', a
     name: 'Publicável', version: published.body.puzzle.version, steps: [],
   })
   assert.equal(mutation.status, 404)
+})
+
+test('manutenção publicada edita enunciado e mensagem, bloqueia resposta resolvida e acrescenta dica ao fim', async (context) => {
+  const { origin, database } = await setup(context)
+  const author = await login(origin, 'autora')
+  const draft = await authorRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Conteúdo editável' })
+  const id = draft.body.puzzle.id
+  const saved = await authorRequest(origin, author, `/api/author/puzzles/${id}/draft`, 'PUT', {
+    name: 'Conteúdo editável', version: 1, steps: [{ prompt: 'Antes', answer: 'resposta' }],
+  })
+  const published = await authorRequest(origin, author, `/api/author/puzzles/${id}/publish`, 'POST', { expectedVersion: saved.body.puzzle.version })
+  const stepId = published.body.puzzle.steps[0].id
+  const firstHint = await authorRequest(origin, author, `/api/author/steps/${stepId}/hints`, 'POST', { text: 'Dica inicial', expectedVersion: published.body.puzzle.version })
+  const secondHint = await authorRequest(origin, author, `/api/author/steps/${stepId}/hints`, 'POST', { text: 'Dica final', expectedVersion: published.body.puzzle.version + 1 })
+  assert.equal(firstHint.body.hints[0].position, 1)
+  assert.equal(secondHint.body.hints[1].position, 2)
+  assert.equal(secondHint.body.hints[0].id, firstHint.body.hints[0].id)
+
+  database.prepare('UPDATE steps SET first_solved_at = CURRENT_TIMESTAMP WHERE id = ?').run(stepId)
+  const edited = await authorRequest(origin, author, `/api/author/steps/${stepId}/content`, 'PATCH', {
+    prompt: 'Depois', answer: 'resposta alterada', expectedVersion: published.body.puzzle.version + 2,
+  })
+  assert.equal(edited.status, 200)
+  assert.equal(edited.body.puzzle.steps[0].prompt, 'Depois')
+  assert.equal(edited.body.puzzle.steps[0].answer_text, 'resposta')
+  const message = await authorRequest(origin, author, `/api/author/puzzles/${id}/final-message`, 'PATCH', {
+    finalMessage: 'Você concluiu.', expectedVersion: edited.body.puzzle.version,
+  })
+  assert.equal(message.body.puzzle.final_message, 'Você concluiu.')
+  assert.equal((await authorRequest(origin, author, `/api/author/puzzles/${id}/pause`, 'POST', {})).status, 404)
 })
 
 test('autor lista, cria e retoma rascunho; outra conta não lê seu conteúdo', async (context) => {

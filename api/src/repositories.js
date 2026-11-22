@@ -72,6 +72,7 @@ export function createRepositories(database) {
     FROM steps JOIN puzzles ON puzzles.id = steps.puzzle_id
     WHERE steps.puzzle_id = ? AND puzzles.author_id = ? ORDER BY steps.position
   `)
+  const findHintsByStep = database.prepare(`SELECT id, position, text FROM hints WHERE step_id = ? ORDER BY position`)
   const findDraftForSave = database.prepare(`SELECT id, version, status FROM puzzles WHERE id = ? AND author_id = ?`)
   const findOwnedStep = database.prepare(`SELECT id FROM steps WHERE id = ? AND puzzle_id = ?`)
   const shiftStepPosition = database.prepare('UPDATE steps SET position = ? WHERE id = ? AND puzzle_id = ?')
@@ -81,6 +82,17 @@ export function createRepositories(database) {
   const updateDraftSnapshot = database.prepare(`UPDATE puzzles SET name_display = ?, name_key = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
   const readDraftForPublish = database.prepare(`SELECT puzzles.id, puzzles.version, puzzles.status, puzzles.final_message, COUNT(steps.id) AS step_count, SUM(CASE WHEN trim(steps.prompt) = '' OR trim(steps.answer_text) = '' THEN 1 ELSE 0 END) AS incomplete_steps FROM puzzles LEFT JOIN steps ON steps.puzzle_id = puzzles.id WHERE puzzles.id = ? AND puzzles.author_id = ? GROUP BY puzzles.id`)
   const publishDraft = database.prepare(`UPDATE puzzles SET status = 'published', published_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
+  const updateFinalMessage = database.prepare(`UPDATE puzzles SET final_message = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'published' AND version = ?`)
+  const findStepForAuthor = database.prepare(`SELECT steps.id, steps.puzzle_id, steps.first_solved_at FROM steps JOIN puzzles ON puzzles.id = steps.puzzle_id WHERE steps.id = ? AND puzzles.author_id = ? AND puzzles.status = 'published'`)
+  const updateStepContent = database.prepare(`UPDATE steps SET prompt = ?, answer_text = ?, answer_key = ? WHERE id = ? AND first_solved_at IS NULL`)
+  const updateStepPrompt = database.prepare(`UPDATE steps SET prompt = ? WHERE id = ?`)
+  const incrementOwnedPuzzleVersion = database.prepare(`UPDATE puzzles SET version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'published' AND version = ?`)
+  const insertHint = database.prepare(`INSERT INTO hints (step_id, position, text) SELECT ?, COALESCE(MAX(position), 0) + 1, ? FROM hints WHERE step_id = ?`)
+  const findHintForAuthor = database.prepare(`SELECT hints.id, hints.step_id, hints.position, steps.puzzle_id FROM hints JOIN steps ON steps.id = hints.step_id JOIN puzzles ON puzzles.id = steps.puzzle_id WHERE hints.id = ? AND puzzles.author_id = ? AND puzzles.status = 'published'`)
+  const updateHintText = database.prepare(`UPDATE hints SET text = ? WHERE id = ?`)
+  const deleteHint = database.prepare(`DELETE FROM hints WHERE id = ?`)
+  const shiftHintsAfterDelete = database.prepare(`UPDATE hints SET position = position - 1 WHERE step_id = ? AND position > ?`)
+  const listHintsForStep = database.prepare(`SELECT id, step_id, position, text FROM hints WHERE step_id = ? ORDER BY position`)
   const incrementPuzzleVersion = database.prepare(`
     UPDATE puzzles
     SET version = version + 1,
@@ -153,7 +165,11 @@ export function createRepositories(database) {
       readForAuthor(puzzleId, authorId) {
         const puzzle = findPuzzleByIdAndAuthorForRead.get(puzzleId, authorId)
         if (!puzzle) return null
-        return { ...puzzle, steps: findStepsByPuzzleAndAuthor.all(puzzleId, authorId) }
+        const steps = findStepsByPuzzleAndAuthor.all(puzzleId, authorId).map((step) => ({
+          ...step,
+          hints: findHintsByStep.all(step.id),
+        }))
+        return { ...puzzle, steps }
       },
       saveDraftSnapshot({ puzzleId, authorId, expectedVersion, nameDisplay, nameKey, steps }) {
         return runInImmediateTransaction(database, () => {
@@ -198,6 +214,63 @@ export function createRepositories(database) {
           const result = publishDraft.run(puzzleId, authorId, expectedVersion)
           if (result.changes !== 1) throw new VersionConflictError()
           return this.readForAuthor(puzzleId, authorId)
+        })
+      },
+      updateFinalMessage({ puzzleId, authorId, expectedVersion, finalMessage }) {
+        return runInImmediateTransaction(database, () => {
+          const result = updateFinalMessage.run(finalMessage, puzzleId, authorId, expectedVersion)
+          if (result.changes !== 1) throw new VersionConflictError()
+          return this.readForAuthor(puzzleId, authorId)
+        })
+      },
+      updateStepContent({ stepId, authorId, expectedVersion, prompt, answerText, answerKey }) {
+        return runInImmediateTransaction(database, () => {
+          const step = findStepForAuthor.get(stepId, authorId)
+          if (!step) throw new RepositoryReferenceError('editar a etapa')
+          const puzzle = findDraftForSave.get(step.puzzle_id, authorId)
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          if (step.first_solved_at) {
+            updateStepPrompt.run(prompt, stepId)
+          } else {
+            updateStepContent.run(prompt, answerText, answerKey, stepId)
+          }
+          const result = incrementOwnedPuzzleVersion.run(step.puzzle_id, authorId, expectedVersion)
+          if (result.changes !== 1) throw new VersionConflictError()
+          return this.readForAuthor(step.puzzle_id, authorId)
+        })
+      },
+      addHint({ stepId, authorId, expectedVersion, text }) {
+        return runInImmediateTransaction(database, () => {
+          const step = findStepForAuthor.get(stepId, authorId)
+          if (!step) throw new RepositoryReferenceError('adicionar a dica')
+          const puzzle = findDraftForSave.get(step.puzzle_id, authorId)
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          insertHint.run(stepId, text, stepId)
+          if (incrementOwnedPuzzleVersion.run(step.puzzle_id, authorId, expectedVersion).changes !== 1) throw new VersionConflictError()
+          return listHintsForStep.all(stepId)
+        })
+      },
+      editHint({ hintId, authorId, expectedVersion, text }) {
+        return runInImmediateTransaction(database, () => {
+          const hint = findHintForAuthor.get(hintId, authorId)
+          if (!hint) throw new RepositoryReferenceError('editar a dica')
+          const puzzle = findDraftForSave.get(hint.puzzle_id, authorId)
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          updateHintText.run(text, hintId)
+          if (incrementOwnedPuzzleVersion.run(hint.puzzle_id, authorId, expectedVersion).changes !== 1) throw new VersionConflictError()
+          return listHintsForStep.all(hint.step_id)
+        })
+      },
+      removeHint({ hintId, authorId, expectedVersion }) {
+        return runInImmediateTransaction(database, () => {
+          const hint = findHintForAuthor.get(hintId, authorId)
+          if (!hint) throw new RepositoryReferenceError('remover a dica')
+          const puzzle = findDraftForSave.get(hint.puzzle_id, authorId)
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          deleteHint.run(hintId)
+          shiftHintsAfterDelete.run(hint.step_id, hint.position)
+          if (incrementOwnedPuzzleVersion.run(hint.puzzle_id, authorId, expectedVersion).changes !== 1) throw new VersionConflictError()
+          return listHintsForStep.all(hint.step_id)
         })
       },
       incrementVersion({ puzzleId, authorId, expectedVersion }) {
