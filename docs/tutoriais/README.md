@@ -5,3 +5,4 @@
 - [1.3. Configuração e scripts locais](define-puzzle-platform-mvp/1.3.md)
 - [2.1. SQLite e primeira migração](define-puzzle-platform-mvp/2.1.md)
 - [2.2. Validar nomes, respostas e limites](define-puzzle-platform-mvp/2.2.md)
+- [2.3. Criar repositórios e proteger referências](define-puzzle-platform-mvp/2.3.md)
