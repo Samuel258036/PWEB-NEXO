@@ -1,5 +1,7 @@
 import express from 'express'
 import { join } from 'node:path'
+import { createRepositories } from './repositories.js'
+import { createAuthRouter } from './auth.js'
 import { createSessionMiddleware } from './session-store.js'
 
 export function createApp({
@@ -24,6 +26,7 @@ export function createApp({
     })
     app.use(middleware)
     app.locals.sessionStore = store
+    app.use('/api/auth', express.json(), createAuthRouter({ repositories: createRepositories(database) }))
   }
 
   app.get('/api/health', (_request, response) => {

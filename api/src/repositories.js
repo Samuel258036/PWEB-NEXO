@@ -40,6 +40,11 @@ export function createRepositories(database) {
     FROM users
     WHERE username_key = ?
   `)
+  const findUserById = database.prepare(`
+    SELECT id, username_display, username_key, password_hash, created_at
+    FROM users
+    WHERE id = ?
+  `)
   const insertUser = database.prepare(`
     INSERT INTO users (username_display, username_key, password_hash)
     VALUES (@usernameDisplay, @usernameKey, @passwordHash)
@@ -104,6 +109,9 @@ export function createRepositories(database) {
 
   return {
     users: {
+      findById(userId) {
+        return findUserById.get(userId)
+      },
       findByUsernameKey(usernameKey) {
         return findUserByUsernameKey.get(usernameKey)
       },
