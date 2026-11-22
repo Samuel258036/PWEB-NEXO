@@ -91,6 +91,7 @@ export function createRepositories(database) {
   const findHintForAuthor = database.prepare(`SELECT hints.id, hints.step_id, hints.position, steps.puzzle_id FROM hints JOIN steps ON steps.id = hints.step_id JOIN puzzles ON puzzles.id = steps.puzzle_id WHERE hints.id = ? AND puzzles.author_id = ? AND puzzles.status = 'published'`)
   const updateHintText = database.prepare(`UPDATE hints SET text = ? WHERE id = ?`)
   const deleteHint = database.prepare(`DELETE FROM hints WHERE id = ?`)
+  const deleteOwnedPuzzle = database.prepare(`DELETE FROM puzzles WHERE id = ? AND author_id = ? AND version = ?`)
   const shiftHintsAfterDelete = database.prepare(`UPDATE hints SET position = position - 1 WHERE step_id = ? AND position > ?`)
   const listHintsForStep = database.prepare(`SELECT id, step_id, position, text FROM hints WHERE step_id = ? ORDER BY position`)
   const incrementPuzzleVersion = database.prepare(`
@@ -271,6 +272,16 @@ export function createRepositories(database) {
           shiftHintsAfterDelete.run(hint.step_id, hint.position)
           if (incrementOwnedPuzzleVersion.run(hint.puzzle_id, authorId, expectedVersion).changes !== 1) throw new VersionConflictError()
           return listHintsForStep.all(hint.step_id)
+        })
+      },
+      deleteForAuthor({ puzzleId, authorId, expectedVersion }) {
+        return runInImmediateTransaction(database, () => {
+          const puzzle = findPuzzleByIdAndAuthor.get(puzzleId, authorId)
+          if (!puzzle) throw new RepositoryReferenceError('excluir o enigma')
+          if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          const result = deleteOwnedPuzzle.run(puzzleId, authorId, expectedVersion)
+          if (result.changes !== 1) throw new VersionConflictError()
+          return { id: puzzleId, name: puzzle.name_display }
         })
       },
       incrementVersion({ puzzleId, authorId, expectedVersion }) {

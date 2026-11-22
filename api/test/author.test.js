@@ -141,6 +141,35 @@ test('manutenção publicada edita enunciado e mensagem, bloqueia resposta resol
   assert.equal((await authorRequest(origin, author, `/api/author/puzzles/${id}/pause`, 'POST', {})).status, 404)
 })
 
+test('exclusão confirmada remove cascatas, mantém contas e libera o nome', async (context) => {
+  const { origin, database, accounts } = await setup(context)
+  const author = await login(origin, 'autora')
+  const other = await login(origin, 'jogadora')
+  const draft = await authorRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Nome liberado' })
+  const puzzleId = draft.body.puzzle.id
+  const saved = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Nome liberado', version: 1, steps: [{ prompt: 'Passo', answer: 'solução' }],
+  })
+  const published = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', { expectedVersion: saved.body.puzzle.version })
+  const stepId = published.body.puzzle.steps[0].id
+  const hintId = Number(database.prepare('INSERT INTO hints (step_id, position, text) VALUES (?, 1, ?)').run(stepId, 'Dica').lastInsertRowid)
+  const progressId = Number(database.prepare('INSERT INTO progress (user_id, puzzle_id, current_step_id) VALUES (?, ?, ?)').run(accounts[1], puzzleId, stepId).lastInsertRowid)
+  database.prepare('INSERT INTO hint_reveals (progress_id, hint_id) VALUES (?, ?)').run(progressId, hintId)
+
+  const missingConfirmation = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}`, 'DELETE', { expectedVersion: published.body.puzzle.version })
+  assert.equal(missingConfirmation.status, 400)
+  const deleted = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}`, 'DELETE', {
+    confirmed: true, expectedVersion: published.body.puzzle.version,
+  })
+  assert.equal(deleted.status, 200)
+  assert.equal(database.prepare('SELECT count(*) AS count FROM progress WHERE puzzle_id = ?').get(puzzleId).count, 0)
+  assert.equal(database.prepare('SELECT count(*) AS count FROM hints WHERE id = ?').get(hintId).count, 0)
+  assert.ok(database.prepare('SELECT id FROM users WHERE id = ?').get(accounts[0]))
+  const reused = await authorRequest(origin, other, '/api/author/puzzles', 'POST', { name: 'Nome liberado' })
+  assert.equal(reused.status, 201)
+  assert.notEqual(reused.body.puzzle.id, puzzleId)
+})
+
 test('autor lista, cria e retoma rascunho; outra conta não lê seu conteúdo', async (context) => {
   const { origin } = await setup(context)
   const author = await login(origin, 'autora')

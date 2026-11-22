@@ -200,5 +200,26 @@ export function createAuthorRouter({ repositories }) {
     }
   })
 
+  router.delete('/puzzles/:id', (request, response) => {
+    const puzzleId = Number(request.params.id)
+    const { confirmed, expectedVersion } = request.body ?? {}
+    if (confirmed !== true) {
+      sendError(response, 400, 'CONFIRMATION_REQUIRED', 'Confirme a exclusão do enigma e de todo o progresso associado.')
+      return
+    }
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      sendError(response, 400, 'INVALID_VERSION', 'Informe a versão atual do enigma.')
+      return
+    }
+    try {
+      const deleted = repositories.puzzles.deleteForAuthor({ puzzleId, authorId: request.session.userId, expectedVersion })
+      response.json({ deleted: true, puzzle: deleted })
+    } catch (error) {
+      if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
+      else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
+      else throw error
+    }
+  })
+
   return router
 }
