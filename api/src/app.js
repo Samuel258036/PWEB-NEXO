@@ -1,9 +1,30 @@
 import express from 'express'
 import { join } from 'node:path'
+import { createSessionMiddleware } from './session-store.js'
 
-export function createApp({ buildDirectory } = {}) {
+export function createApp({
+  buildDirectory,
+  database,
+  sessionSecret,
+  secureCookie = false,
+  trustProxyHops = 0,
+} = {}) {
   const app = express()
   app.disable('x-powered-by')
+
+  if (trustProxyHops > 0) {
+    app.set('trust proxy', trustProxyHops)
+  }
+
+  if (database) {
+    const { middleware, store } = createSessionMiddleware({
+      database,
+      secret: sessionSecret,
+      secure: secureCookie,
+    })
+    app.use(middleware)
+    app.locals.sessionStore = store
+  }
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' })

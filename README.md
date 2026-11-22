@@ -13,7 +13,15 @@ npm run dev
 
 Abra o endereço exibido pelo Vite. A tela inicial exibe “O que você busca?”.
 
-Em outro terminal, rode `npm run dev:api`. O Vite encaminha `/api` para o Express na porta 3000. Acesse `http://localhost:5173/api/health` usando a porta mostrada pelo Vite.
+Em outro terminal, defina um segredo aleatório e mantenha o mesmo valor nas reinicializações da API:
+
+```powershell
+# Execute uma vez e reutilize este mesmo valor nos reinícios da API.
+$env:SESSION_SECRET = node -p "require('node:crypto').randomBytes(32).toString('hex')"
+npm run dev:api
+```
+
+O Vite encaminha `/api` para o Express na porta 3000. Acesse `http://localhost:5173/api/health` usando a porta mostrada pelo Vite.
 
 ## Servir o build localmente
 
@@ -23,6 +31,7 @@ $env:NODE_ENV = 'production'
 $env:APP_ORIGIN = 'https://nexo.example'
 $env:DATABASE_PATH = Join-Path (Get-Location) 'data/nexo.sqlite'
 $env:SESSION_SECRET = node -p "require('node:crypto').randomBytes(32).toString('hex')"
+$env:TRUST_PROXY_HOPS = '1'
 npm start
 ```
 
@@ -38,7 +47,8 @@ O exemplo usa configuração descartável para testar o build via HTTP local. A 
 | `PORT` | Porta do Express, com padrão 3000. Se alterada em desenvolvimento, use o mesmo valor nos terminais do Express e do Vite. |
 | `APP_ORIGIN` | Origem pública. Exige HTTPS em produção e usa `http://localhost:5173` por padrão no desenvolvimento. |
 | `DATABASE_PATH` | Caminho do arquivo SQLite. Em produção é absoluto e deve ficar em um diretório persistente. O padrão local é `data/nexo.sqlite`. |
-| `SESSION_SECRET` | Segredo obrigatório em produção. Mantenha o valor privado e estável entre reinícios. |
+| `SESSION_SECRET` | Segredo obrigatório para iniciar a API e manter sessões válidas entre reinícios. Use valor aleatório, privado e estável; não gere outro valor a cada reinício. |
+| `TRUST_PROXY_HOPS` | Número de proxies confiáveis antes do Express (padrão `0`). Defina somente quando houver proxy HTTPS e use a quantidade real de saltos; `1` no exemplo de produção é ilustrativo. |
 
 ## Banco local e migrações
 

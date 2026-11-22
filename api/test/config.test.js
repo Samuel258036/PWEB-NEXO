@@ -17,11 +17,17 @@ test('configuração padrão local e valores explícitos de produção', () => {
   const local = readConfig({})
   assert.equal(local.port, 3000)
   assert.equal(local.appOrigin, 'http://localhost:5173')
+  assert.equal(local.trustProxyHops, 0)
   assert.match(local.databasePath, /data[\\/]nexo\.sqlite$/)
 
   const configured = readConfig(production)
   assert.equal(configured.production, true)
   assert.equal(configured.sessionSecret, production.SESSION_SECRET)
+  assert.equal(configured.trustProxyHops, 0)
+  assert.equal(readConfig({ TRUST_PROXY_HOPS: '1' }).trustProxyHops, 1)
+  for (const trustProxyHops of ['-1', '1.5', 'one']) {
+    assert.throws(() => readConfig({ TRUST_PROXY_HOPS: trustProxyHops }), /TRUST_PROXY_HOPS/)
+  }
 
   for (const port of ['0', '70000', '99abc', ' 3000 ', '']) {
     assert.throws(() => readConfig({ PORT: port }), /PORT/)
@@ -51,5 +57,26 @@ test('o ponto de entrada falha antes de ouvir quando a configuração é inváli
   assert.equal(result.status, 1)
   assert.match(result.stderr, /PORT/)
   assert.doesNotMatch(result.stderr, /exemplo descartável/)
+  assert.equal(result.stdout, '')
+})
+
+test('o servidor exige segredo estável também em desenvolvimento', () => {
+  const serverPath = fileURLToPath(new URL('../src/server.js', import.meta.url))
+  const result = spawnSync(process.execPath, [serverPath], {
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      PORT: '3000',
+      APP_ORIGIN: 'http://localhost:5173',
+      DATABASE_PATH: join(tmpdir(), 'nexo-sessao-segredo.sqlite'),
+      SESSION_SECRET: '',
+    },
+    encoding: 'utf8',
+    timeout: 5000,
+  })
+
+  assert.ifError(result.error)
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /SESSION_SECRET deve ser definida/)
   assert.equal(result.stdout, '')
 })

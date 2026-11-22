@@ -54,7 +54,13 @@ export function readConfig(env, defaultMode = 'development') {
     throw new Error('SESSION_SECRET é obrigatório em produção.')
   }
 
-  return { production, port, appOrigin: origin.origin, databasePath, sessionSecret }
+  const rawTrustProxyHops = env.TRUST_PROXY_HOPS ?? '0'
+  const trustProxyHops = Number(rawTrustProxyHops)
+  if (!/^\d+$/.test(rawTrustProxyHops) || !Number.isSafeInteger(trustProxyHops)) {
+    throw new Error('TRUST_PROXY_HOPS deve ser um inteiro não negativo.')
+  }
+
+  return { production, port, appOrigin: origin.origin, databasePath, sessionSecret, trustProxyHops }
 }
 
 export function prepareDatabaseDirectory(databasePath) {
