@@ -56,6 +56,38 @@ async function authorRequest(origin, session, path, method = 'GET', body) {
   return { status: response.status, body: await response.json() }
 }
 
+test('rascunho salva snapshot com IDs estáveis, renomeia e ordena etapas', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const other = await login(origin, 'jogadora')
+  const first = await authorRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Primeiro nome' })
+  const puzzleId = first.body.puzzle.id
+  const created = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Nome atualizado', version: 1,
+    steps: [{ prompt: 'A', answer: 'um' }, { prompt: 'B', answer: 'dois' }],
+  })
+  assert.equal(created.status, 200)
+  const [stepA, stepB] = created.body.puzzle.steps
+  const reordered = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Nome final', version: created.body.puzzle.version,
+    steps: [{ id: stepB.id, prompt: 'B alterado', answer: 'dois' }, { id: stepA.id, prompt: 'A alterado', answer: 'um' }],
+  })
+  assert.equal(reordered.body.puzzle.steps[0].id, stepB.id)
+  assert.equal(reordered.body.puzzle.steps[1].id, stepA.id)
+  assert.deepEqual(reordered.body.puzzle.steps.map((step) => step.position), [1, 2])
+  assert.equal(reordered.body.puzzle.name_display, 'Nome final')
+
+  const foreignStep = await authorRequest(origin, other, '/api/author/puzzles', 'POST', { name: 'Outro rascunho' })
+  const foreignContent = await authorRequest(origin, other, `/api/author/puzzles/${foreignStep.body.puzzle.id}/draft`, 'PUT', {
+    name: 'Outro rascunho', version: 1, steps: [{ prompt: 'Privado', answer: 'privado' }],
+  })
+  const rejected = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Nome final', version: reordered.body.puzzle.version,
+    steps: [{ id: foreignContent.body.puzzle.steps[0].id, prompt: '', answer: '' }],
+  })
+  assert.equal(rejected.status, 404)
+})
+
 test('autor lista, cria e retoma rascunho; outra conta não lê seu conteúdo', async (context) => {
   const { origin } = await setup(context)
   const author = await login(origin, 'autora')

@@ -12,3 +12,4 @@
 - [3.3. Identificar, cadastrar e entrar](define-puzzle-platform-mvp/3.3.md)
 - [3.4. Proteger as requisições](define-puzzle-platform-mvp/3.4.md)
 - [4.1. Criar e retomar rascunhos](define-puzzle-platform-mvp/4.1.md)
+- [4.2. Salvar e ordenar um rascunho](define-puzzle-platform-mvp/4.2.md)
