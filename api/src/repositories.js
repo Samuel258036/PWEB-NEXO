@@ -60,6 +60,18 @@ export function createRepositories(database) {
     FROM puzzles
     WHERE id = ? AND author_id = ?
   `)
+  const listPuzzlesByAuthor = database.prepare(`
+    SELECT id, author_id, name_display, name_key, status, final_message, version,
+           created_at, updated_at, published_at
+    FROM puzzles WHERE author_id = ? ORDER BY updated_at DESC, id DESC
+  `)
+  const findPuzzleByIdAndAuthorForRead = findPuzzleByIdAndAuthor
+  const findStepsByPuzzleAndAuthor = database.prepare(`
+    SELECT steps.id, steps.position, steps.prompt, steps.answer_text, steps.answer_key,
+           steps.first_solved_at
+    FROM steps JOIN puzzles ON puzzles.id = steps.puzzle_id
+    WHERE steps.puzzle_id = ? AND puzzles.author_id = ? ORDER BY steps.position
+  `)
   const incrementPuzzleVersion = database.prepare(`
     UPDATE puzzles
     SET version = version + 1,
@@ -120,11 +132,19 @@ export function createRepositories(database) {
       },
     },
     puzzles: {
+      listForAuthor(authorId) {
+        return listPuzzlesByAuthor.all(authorId)
+      },
       create({ authorId, nameDisplay, nameKey }) {
         return insertPuzzle.run({ authorId, nameDisplay, nameKey })
       },
       findByIdForAuthor(puzzleId, authorId) {
         return findPuzzleByIdAndAuthor.get(puzzleId, authorId)
+      },
+      readForAuthor(puzzleId, authorId) {
+        const puzzle = findPuzzleByIdAndAuthorForRead.get(puzzleId, authorId)
+        if (!puzzle) return null
+        return { ...puzzle, steps: findStepsByPuzzleAndAuthor.all(puzzleId, authorId) }
       },
       incrementVersion({ puzzleId, authorId, expectedVersion }) {
         return incrementVersion(incrementPuzzleVersion, { puzzleId, authorId, expectedVersion })

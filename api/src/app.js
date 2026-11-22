@@ -5,6 +5,7 @@ import { createAuthRouter } from './auth.js'
 import { createSessionMiddleware } from './session-store.js'
 import { createRequestSecurity, requireAuthenticatedSession } from './security.js'
 import helmet from 'helmet'
+import { createAuthorRouter } from './author.js'
 
 function createAuthRateLimit({ limit = 10, windowMs = 60_000, now = Date.now } = {}) {
   const requestsByIp = new Map()
@@ -62,6 +63,7 @@ export function createApp({
     app.use('/api/auth/login', authRateLimit)
     app.use('/api/auth', createAuthRouter({ repositories: createRepositories(database) }))
     app.use('/api/author', requireAuthenticatedSession)
+    app.use('/api/author', createAuthorRouter({ repositories: createRepositories(database) }))
     app.use('/api/play', requireAuthenticatedSession)
   }
 
