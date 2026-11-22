@@ -16,3 +16,4 @@
 - [4.3. Publicar um enigma](define-puzzle-platform-mvp/4.3.md)
 - [4.4. Manter o conteúdo publicado](define-puzzle-platform-mvp/4.4.md)
 - [4.5. Excluir um enigma](define-puzzle-platform-mvp/4.5.md)
+- [4.6. Consultar contratos da API de autoria](define-puzzle-platform-mvp/4.6.md)
