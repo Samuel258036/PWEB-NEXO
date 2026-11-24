@@ -88,6 +88,46 @@ function incrementVersion(statement, values) {
 
 export function createRepositories(database) {
 
+  const findProgressForHintReveal = database.prepare(`
+    SELECT
+      progress.id AS progress_id,
+      progress.user_id,
+      progress.puzzle_id,
+      progress.current_step_id,
+      progress.completed_at,
+      progress.version
+    FROM progress
+    JOIN puzzles ON puzzles.id = progress.puzzle_id
+    WHERE progress.user_id = ?
+      AND progress.puzzle_id = ?
+      AND puzzles.status = 'published'
+  `)
+  const findNextUnrevealedHintForStep = database.prepare(`
+    SELECT hints.id, hints.step_id, hints.position, hints.text
+    FROM hints
+    WHERE hints.step_id = ?
+      AND hints.id NOT IN (
+        SELECT hint_id
+        FROM hint_reveals
+        WHERE progress_id = ?
+      )
+    ORDER BY hints.position ASC
+    LIMIT 1
+  `)
+  const findHintForCurrentStep = database.prepare(`
+    SELECT hints.id, hints.step_id, hints.position, hints.text
+    FROM hints
+    WHERE hints.id = ? AND hints.step_id = ?
+  `)
+  const isHintAlreadyRevealed = database.prepare(`
+    SELECT 1
+    FROM hint_reveals
+    WHERE progress_id = ? AND hint_id = ?
+  `)
+  const insertHintRevealIgnoreDuplicate = database.prepare(`
+    INSERT OR IGNORE INTO hint_reveals (progress_id, hint_id)
+    VALUES (?, ?)
+  `)
   
   const findUserByUsernameKey = database.prepare(`
     SELECT id, username_display, username_key, password_hash, created_at
@@ -484,6 +524,67 @@ export function createRepositories(database) {
       },
     },
     progress: {
+
+      revealNextHint({ userId, puzzleId, stepId, expectedVersion, hintId }) {
+        return runInImmediateTransaction(database, () => {
+          const current = findProgressForHintReveal.get(userId, puzzleId)
+          if (!current) return null
+
+          if (
+            current.completed_at !== null ||
+            current.current_step_id === null ||
+            current.current_step_id !== stepId ||
+            current.version !== expectedVersion
+          ) {
+            throw new StaleProgressError(buildPlayDto(userId, puzzleId))
+          }
+
+          const nextHint = findNextUnrevealedHintForStep.get(stepId, current.progress_id)
+          if (!nextHint) {
+            return {
+              exhausted: true,
+              play: buildPlayDto(userId, puzzleId),
+            }
+          }
+
+          if (hintId !== undefined) {
+            const requestedHint = findHintForCurrentStep.get(hintId, stepId)
+            if (!requestedHint) {
+              throw new RepositoryReferenceError('revelar a dica')
+            }
+
+            if (isHintAlreadyRevealed.get(current.progress_id, requestedHint.id)) {
+              return {
+                exhausted: false,
+                play: buildPlayDto(userId, puzzleId),
+              }
+            }
+
+            if (requestedHint.id !== nextHint.id) {
+              const error = new Error('As dicas desta etapa devem ser reveladas na ordem atual.')
+              error.code = 'HINT_OUT_OF_ORDER'
+              throw error
+            }
+          }
+
+          insertHintRevealIgnoreDuplicate.run(current.progress_id, nextHint.id)
+
+          const updated = incrementProgressVersion.run({
+            progressId: current.progress_id,
+            userId,
+            expectedVersion,
+          })
+          if (updated.changes !== 1) {
+            throw new StaleProgressError(buildPlayDto(userId, puzzleId))
+          }
+
+          return {
+            exhausted: false,
+            play: buildPlayDto(userId, puzzleId),
+          }
+        })
+      },
+
       submitAnswer({ userId, puzzleId, stepId, expectedVersion, answerKey }) {
         return runInImmediateTransaction(database, () => {
           const current = findProgressForSubmit.get(userId, puzzleId)

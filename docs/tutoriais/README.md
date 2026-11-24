@@ -21,3 +21,4 @@
 - [5.2 — DTO e consulta da etapa atual/conclusão](define-puzzle-platform-mvp/5.2.md)
 - [5.3 — Validação e avanço/conclusão transacionais](define-puzzle-platform-mvp/5.3.md)
 - [5.4 — Checagem de etapa e versão em envios](define-puzzle-platform-mvp/5.4.md)
+- [5.5 — Revelação de dicas por ID na ordem atual](define-puzzle-platform-mvp/5.5.md)

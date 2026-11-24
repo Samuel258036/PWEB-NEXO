@@ -9,6 +9,7 @@ import { createApp } from '../src/app.js'
 import { createRepositories } from '../src/repositories.js'
 import { hashPassword } from '../src/passwords.js'
 
+
 async function setup(context) {
   const directory = mkdtempSync(join(tmpdir(), 'nexo-play-'))
   const database = new DatabaseSync(join(directory, 'nexo.sqlite'))
@@ -55,10 +56,12 @@ async function login(origin, username) {
   return { cookie: response.headers.get('set-cookie').split(';')[0], csrfToken: body.csrfToken }
 }
 
-async function apiRequest(origin, session, path, method = 'GET', body) {
-  const headers = { cookie: session.cookie, origin }
-  if (method !== 'GET') {
+async function apiRequest(origin, session, path, method = 'GET', body, extraHeaders = {}) {
+  const headers = { cookie: session.cookie, origin, ...extraHeaders }
+  if (body !== undefined) {
     headers['content-type'] = 'application/json'
+  }
+  if (method !== 'GET') {
     headers['x-csrf-token'] = session.csrfToken
   }
   const response = await fetch(`${origin}${path}`, {
@@ -66,7 +69,14 @@ async function apiRequest(origin, session, path, method = 'GET', body) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
-  return { status: response.status, body: await response.json() }
+  const rawText = await response.text()
+  let parsedBody
+  try {
+    parsedBody = JSON.parse(rawText)
+  } catch {
+    throw new Error(`Resposta não-JSON (${response.status}) em ${method} ${path}: ${rawText.slice(0, 200)}`)
+  }
+  return { status: response.status, body: parsedBody }
 }
 
 test('resolve enigma publicado por nome normalizado, abre partida idempotente e oculta respostas/dicas', async (context) => {
@@ -544,4 +554,123 @@ test('impede avanço duplicado em duplo clique/retry, duas abas e etapas consecu
   assert.equal(advanceToStep3.body.correct, true)
   assert.equal(advanceToStep3.body.play.currentStep.id, step3.id)
   assert.equal(advanceToStep3.body.play.version, 3)
+})
+
+test('revela dicas por ID na ordem atual, lida com esgotamento, snapshot duplicado, retomada, edição, remoção e nova dica oculta', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player = await login(origin, 'jogadora1')
+
+  const created = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Arquivo das Dicas' })
+  const puzzleId = created.body.puzzle.id
+
+  const saved = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Arquivo das Dicas',
+    version: 1,
+    steps: [
+      { prompt: 'Decifre o código', answer: 'abertura' },
+      { prompt: 'Segunda etapa', answer: 'fim' },
+    ],
+  })
+  const published = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: saved.body.puzzle.version,
+  })
+  const step1Id = published.body.puzzle.steps[0].id
+
+  let version = published.body.puzzle.version
+  const h1Res = await apiRequest(origin, author, `/api/author/steps/${step1Id}/hints`, 'POST', {
+    text: 'Dica 1 original',
+    expectedVersion: version,
+  })
+  version += 1
+  const h2Res = await apiRequest(origin, author, `/api/author/steps/${step1Id}/hints`, 'POST', {
+    text: 'Dica 2 original',
+    expectedVersion: version,
+  })
+  version += 1
+
+  const hint1Id = h1Res.body.hints[0].id
+  const hint2Id = h2Res.body.hints[1].id
+
+  const opened = await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Arquivo das Dicas' })
+  assert.equal(opened.status, 200)
+  assert.equal(opened.body.play.currentStep.hasMoreHints, true)
+  assert.deepEqual(opened.body.play.currentStep.revealedHints, [])
+
+  // Tentar pular para a segunda dica na ordem atual retorna 409 HINT_OUT_OF_ORDER
+  const outOfOrder = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/hints/reveal`, 'POST', {
+    stepId: step1Id,
+    expectedVersion: 1,
+    hintId: hint2Id,
+  })
+  assert.equal(outOfOrder.status, 409)
+  assert.equal(outOfOrder.body.error.code, 'HINT_OUT_OF_ORDER')
+
+  // Duas solicitações concorrentes do mesmo snapshot: uma vence e a outra recebe STALE_PROGRESS
+  const [r1, r2] = await Promise.all([
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/hints/reveal`, 'POST', {
+      stepId: step1Id,
+      expectedVersion: 1,
+      hintId: hint1Id,
+    }),
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/hints/reveal`, 'POST', {
+      stepId: step1Id,
+      expectedVersion: 1,
+      hintId: hint1Id,
+    }),
+  ])
+  const okReveal = [r1, r2].find((r) => r.status === 200)
+  const conflictReveal = [r1, r2].find((r) => r.status === 409)
+  assert.ok(okReveal)
+  assert.ok(conflictReveal)
+  assert.equal(conflictReveal.body.error.code, 'STALE_PROGRESS')
+  assert.equal(okReveal.body.play.version, 2)
+  assert.equal(okReveal.body.play.currentStep.revealedHints.length, 1)
+
+  // Revela segunda dica e verifica esgotamento (hasMoreHints: false e exhausted: true)
+  const reveal2 = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/hints/reveal`, 'POST', {
+    stepId: step1Id,
+    expectedVersion: 2,
+    hintId: hint2Id,
+  })
+  assert.equal(reveal2.status, 200)
+  assert.equal(reveal2.body.play.currentStep.hasMoreHints, false)
+  assert.equal(reveal2.body.play.version, 3)
+
+  const exhausted = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/hints/reveal`, 'POST', {
+    stepId: step1Id,
+    expectedVersion: 3,
+  })
+  assert.equal(exhausted.status, 200)
+  assert.equal(exhausted.body.exhausted, true)
+  assert.equal(exhausted.body.play.version, 3)
+
+  // Autor edita Dica 1, remove Dica 2 (já revelada) e adiciona Dica 3 (fica oculta)
+  const editedHint1 = await apiRequest(origin, author, `/api/author/hints/${hint1Id}`, 'PATCH', {
+    text: 'Dica 1 editada pelo autor',
+    expectedVersion: version,
+  })
+  assert.equal(editedHint1.status, 200)
+  version += 1
+
+  const deletedHint2 = await apiRequest(origin, author, `/api/author/hints/${hint2Id}`, 'DELETE', undefined, {
+    'if-match': String(version),
+  })
+  assert.equal(deletedHint2.status, 200)
+  version += 1
+
+  const addedHint3 = await apiRequest(origin, author, `/api/author/steps/${step1Id}/hints`, 'POST', {
+    text: 'Dica 3 oculta',
+    expectedVersion: version,
+  })
+  assert.equal(addedHint3.status, 201)
+
+  // Retomada mostra Dica 1 editada, sem Dica 2 removida, e Dica 3 oculta com hasMoreHints: true
+  const resumed = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(resumed.status, 200)
+  assert.deepEqual(resumed.body.play.currentStep.revealedHints, [
+    { id: hint1Id, position: 1, text: 'Dica 1 editada pelo autor' },
+  ])
+  assert.equal(resumed.body.play.currentStep.hasMoreHints, true)
+  assert.equal(JSON.stringify(resumed.body).includes('Dica 3 oculta'), false)
 })
