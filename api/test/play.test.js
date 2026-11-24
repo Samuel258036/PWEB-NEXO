@@ -674,3 +674,179 @@ test('revela dicas por ID na ordem atual, lida com esgotamento, snapshot duplica
   assert.equal(resumed.body.play.currentStep.hasMoreHints, true)
   assert.equal(JSON.stringify(resumed.body).includes('Dica 3 oculta'), false)
 })
+
+test('exercita corrida HTTP entre acerto e edição da etapa em ambas as ordens preservando invariantes', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player = await login(origin, 'jogadora1')
+
+  // Cenário A: edição e acerto concorrentes antes do primeiro acerto
+  const createdA = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Corrida Edicao A' })
+  const puzzleA = createdA.body.puzzle.id
+  const savedA = await apiRequest(origin, author, `/api/author/puzzles/${puzzleA}/draft`, 'PUT', {
+    name: 'Corrida Edicao A',
+    version: 1,
+    steps: [
+      { prompt: 'Enunciado inicial A', answer: 'chave-a' },
+      { prompt: 'Segunda etapa A', answer: 'fim-a' },
+    ],
+  })
+  const pubA = await apiRequest(origin, author, `/api/author/puzzles/${puzzleA}/publish`, 'POST', {
+    expectedVersion: savedA.body.puzzle.version,
+  })
+  const stepA1 = pubA.body.puzzle.steps[0].id
+  await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Corrida Edicao A' })
+
+  const [editResA, answerResA] = await Promise.all([
+    apiRequest(origin, author, `/api/author/steps/${stepA1}/content`, 'PATCH', {
+      prompt: 'Enunciado revisado A',
+      answer: 'chave-a-nova',
+      expectedVersion: pubA.body.puzzle.version,
+    }),
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleA}/answer`, 'POST', {
+      stepId: stepA1,
+      expectedVersion: 1,
+      answer: 'chave-a',
+    }),
+  ])
+
+  assert.ok([200, 409].includes(editResA.status))
+  assert.ok([200, 409].includes(answerResA.status))
+
+  const stateAfterA = await apiRequest(origin, player, `/api/play/puzzles/${puzzleA}`)
+  const authorAfterA = await apiRequest(origin, author, `/api/author/puzzles/${puzzleA}`)
+  assert.equal(stateAfterA.status, 200)
+  assert.equal(authorAfterA.status, 200)
+  // Invariante: se a jogadora avançou, o primeiro acerto ficou marcado e a resposta vigente naquele momento foi aceita
+  if (answerResA.status === 200 && answerResA.body.correct) {
+    assert.ok(authorAfterA.body.puzzle.steps[0].first_solved_at)
+    assert.equal(stateAfterA.body.play.currentStep.position, 2)
+  } else {
+    assert.equal(stateAfterA.body.play.currentStep.position, 1)
+  }
+
+  // Cenário B: edição com resposta alterada após o primeiro acerto não altera answer_text
+  const createdB = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Corrida Edicao B' })
+  const puzzleB = createdB.body.puzzle.id
+  const savedB = await apiRequest(origin, author, `/api/author/puzzles/${puzzleB}/draft`, 'PUT', {
+    name: 'Corrida Edicao B',
+    version: 1,
+    steps: [
+      { prompt: 'Enunciado inicial B', answer: 'chave-b' },
+      { prompt: 'Segunda etapa B', answer: 'fim-b' },
+    ],
+  })
+  const pubB = await apiRequest(origin, author, `/api/author/puzzles/${puzzleB}/publish`, 'POST', {
+    expectedVersion: savedB.body.puzzle.version,
+  })
+  const stepB1 = pubB.body.puzzle.steps[0].id
+  await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Corrida Edicao B' })
+
+  const solvedB1 = await apiRequest(origin, player, `/api/play/puzzles/${puzzleB}/answer`, 'POST', {
+    stepId: stepB1,
+    expectedVersion: 1,
+    answer: 'chave-b',
+  })
+  assert.equal(solvedB1.status, 200)
+  assert.equal(solvedB1.body.correct, true)
+
+  const [editResB1, editResB2] = await Promise.all([
+    apiRequest(origin, author, `/api/author/steps/${stepB1}/content`, 'PATCH', {
+      prompt: 'Enunciado concorrente 1',
+      answer: 'tentativa-bloqueada-1',
+      expectedVersion: pubB.body.puzzle.version,
+    }),
+    apiRequest(origin, author, `/api/author/steps/${stepB1}/content`, 'PATCH', {
+      prompt: 'Enunciado concorrente 2',
+      answer: 'tentativa-bloqueada-2',
+      expectedVersion: pubB.body.puzzle.version,
+    }),
+  ])
+
+  const statusesB = [editResB1.status, editResB2.status].sort()
+  assert.deepEqual(statusesB, [200, 409])
+
+  const authorAfterB = await apiRequest(origin, author, `/api/author/puzzles/${puzzleB}`)
+  assert.equal(authorAfterB.body.puzzle.steps[0].answer_text, 'chave-b')
+  assert.ok(['Enunciado concorrente 1', 'Enunciado concorrente 2'].includes(authorAfterB.body.puzzle.steps[0].prompt))
+})
+
+test('exercita corrida HTTP entre resposta e exclusão e garante ausência de progresso ao recriar com o mesmo nome', async (context) => {
+  const { origin, accounts, database } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player = await login(origin, 'jogadora1')
+
+  const created = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Portal Recriado' })
+  const puzzleId = created.body.puzzle.id
+  const saved = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Portal Recriado',
+    version: 1,
+    steps: [
+      { prompt: 'Passo único', answer: 'abrir' },
+    ],
+  })
+  const pub = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: saved.body.puzzle.version,
+  })
+  const step1Id = pub.body.puzzle.steps[0].id
+
+  await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Portal Recriado' })
+
+  // Corrida concorrente entre envio de resposta da jogadora e exclusão do enigma pela autora
+  const [answerRace, deleteRace] = await Promise.all([
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+      stepId: step1Id,
+      expectedVersion: 1,
+      answer: 'abrir',
+    }),
+    apiRequest(origin, author, `/api/author/puzzles/${puzzleId}`, 'DELETE', {
+      confirmed: true,
+      expectedVersion: pub.body.puzzle.version,
+    }),
+  ])
+
+  assert.ok([200, 404, 409].includes(answerRace.status))
+  assert.ok([200, 404, 409].includes(deleteRace.status))
+
+  // Garante exclusão efetiva para validar a recriação com o mesmo nome
+  const currentAuthorPuzzle = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}`)
+  if (currentAuthorPuzzle.status === 200) {
+    const del = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}`, 'DELETE', {
+      confirmed: true,
+      expectedVersion: currentAuthorPuzzle.body.puzzle.version,
+    })
+    assert.equal(del.status, 200)
+  }
+
+  // Nenhum progresso remanescente do enigma antigo no banco
+  const oldProgressCount = database
+    .prepare('SELECT COUNT(*) AS total FROM progress WHERE puzzle_id = ?')
+    .get(puzzleId).total
+  assert.equal(oldProgressCount, 0)
+
+  // Recria o enigma com o mesmo nome e publica com novo ID
+  const recreated = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Portal Recriado' })
+  assert.equal(recreated.status, 201)
+  const newPuzzleId = recreated.body.puzzle.id
+  assert.notEqual(newPuzzleId, puzzleId)
+
+  const savedNew = await apiRequest(origin, author, `/api/author/puzzles/${newPuzzleId}/draft`, 'PUT', {
+    name: 'Portal Recriado',
+    version: 1,
+    steps: [{ prompt: 'Novo passo', answer: 'novo-segredo' }],
+  })
+  const pubNew = await apiRequest(origin, author, `/api/author/puzzles/${newPuzzleId}/publish`, 'POST', {
+    expectedVersion: savedNew.body.puzzle.version,
+  })
+  assert.equal(pubNew.status, 200)
+
+  // Antes de abrir o novo enigma, GET no novo ID não tem progresso herdado
+  const readBeforeOpen = await apiRequest(origin, player, `/api/play/puzzles/${newPuzzleId}`)
+  assert.equal(readBeforeOpen.status, 404)
+  assert.equal(readBeforeOpen.body.error.code, 'PUZZLE_UNAVAILABLE')
+
+  const progressForPlayerNew = database
+    .prepare('SELECT COUNT(*) AS total FROM progress WHERE user_id = ? AND puzzle_id = ?')
+    .get(accounts.jogadora1, newPuzzleId).total
+  assert.equal(progressForPlayerNew, 0)
+})
