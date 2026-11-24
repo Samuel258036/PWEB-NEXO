@@ -78,6 +78,8 @@ function incrementVersion(statement, values) {
 }
 
 export function createRepositories(database) {
+
+  
   const findUserByUsernameKey = database.prepare(`
     SELECT id, username_display, username_key, password_hash, created_at
     FROM users
@@ -228,6 +230,57 @@ export function createRepositories(database) {
     SELECT COUNT(*) AS total
     FROM hints
     WHERE step_id = ?
+  `)
+
+  const findProgressForSubmit = database.prepare(`
+    SELECT
+      progress.id AS progress_id,
+      progress.user_id,
+      progress.puzzle_id,
+      progress.current_step_id,
+      progress.completed_at,
+      progress.version
+    FROM progress
+    JOIN puzzles ON puzzles.id = progress.puzzle_id
+    WHERE progress.user_id = ?
+      AND progress.puzzle_id = ?
+      AND puzzles.status = 'published'
+  `)
+  const findStepForSubmit = database.prepare(`
+    SELECT id, position, answer_key, first_solved_at
+    FROM steps
+    WHERE id = ? AND puzzle_id = ?
+  `)
+  const findNextStepByPosition = database.prepare(`
+    SELECT id
+    FROM steps
+    WHERE puzzle_id = ? AND position > ?
+    ORDER BY position ASC
+    LIMIT 1
+  `)
+  const markStepFirstSolved = database.prepare(`
+    UPDATE steps
+    SET first_solved_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND first_solved_at IS NULL
+  `)
+  const recordStepSolveIgnoreDuplicate = database.prepare(`
+    INSERT OR IGNORE INTO step_solves (progress_id, step_id)
+    VALUES (?, ?)
+  `)
+  const advanceProgressToNextStep = database.prepare(`
+    UPDATE progress
+    SET current_step_id = ?,
+        version = version + 1,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ? AND version = ?
+  `)
+  const completeProgressRecord = database.prepare(`
+    UPDATE progress
+    SET current_step_id = NULL,
+        completed_at = CURRENT_TIMESTAMP,
+        version = version + 1,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ? AND version = ?
   `)
 
   function buildPlayDto(userId, puzzleId) {
@@ -422,6 +475,57 @@ export function createRepositories(database) {
       },
     },
     progress: {
+      submitAnswer({ userId, puzzleId, answerKey }) {
+        return runInImmediateTransaction(database, () => {
+          const current = findProgressForSubmit.get(userId, puzzleId)
+          if (!current) return null
+
+          if (current.completed_at !== null || current.current_step_id === null) {
+            const error = new Error('Esta partida já foi concluída.')
+            error.code = 'PUZZLE_ALREADY_COMPLETED'
+            throw error
+          }
+
+          const step = findStepForSubmit.get(current.current_step_id, puzzleId)
+          if (!step) return null
+
+          if (step.answer_key !== answerKey) {
+            return {
+              correct: false,
+              play: buildPlayDto(userId, puzzleId),
+            }
+          }
+
+          if (step.first_solved_at === null) {
+            markStepFirstSolved.run(step.id)
+          }
+
+          recordStepSolveIgnoreDuplicate.run(current.progress_id, step.id)
+
+          const nextStep = findNextStepByPosition.get(puzzleId, step.position)
+          if (nextStep) {
+            const updated = advanceProgressToNextStep.run(
+              nextStep.id,
+              current.progress_id,
+              userId,
+              current.version,
+            )
+            if (updated.changes !== 1) throw new VersionConflictError()
+          } else {
+            const completed = completeProgressRecord.run(
+              current.progress_id,
+              userId,
+              current.version,
+            )
+            if (completed.changes !== 1) throw new VersionConflictError()
+          }
+
+          return {
+            correct: true,
+            play: buildPlayDto(userId, puzzleId),
+          }
+        })
+      },
       create({ userId, puzzleId, currentStepId }) {
         return insertProgress.run({ userId, puzzleId, currentStepId })
       },

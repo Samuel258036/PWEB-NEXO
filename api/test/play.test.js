@@ -339,3 +339,117 @@ test('consulta etapa atual e conclusão sem expor respostas, outras etapas ou di
   assert.equal(finishedSerialized.includes('segredo-tres'), false)
   assert.equal(finishedSerialized.includes('Enunciado etapa 2'), false)
 })
+
+test('valida respostas, avança e conclui de forma transacional e bloqueia somente a resposta da etapa após o primeiro acerto', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player1 = await login(origin, 'jogadora1')
+  const player2 = await login(origin, 'jogadora2')
+
+  const created = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Relógio de Areia' })
+  const puzzleId = created.body.puzzle.id
+
+  const saved = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Relógio de Areia',
+    version: 1,
+    steps: [
+      { prompt: 'Primeira charada', answer: 'sol' },
+      { prompt: 'Segunda charada', answer: 'lua' },
+    ],
+  })
+  const published = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: saved.body.puzzle.version,
+  })
+  const [step1, step2] = published.body.puzzle.steps
+
+  const withMsg = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/final-message`, 'PATCH', {
+    finalMessage: 'Tempo concluído!',
+    expectedVersion: published.body.puzzle.version,
+  })
+
+  const hintStep1 = await apiRequest(origin, author, `/api/author/steps/${step1.id}/hints`, 'POST', {
+    text: 'Dica da primeira charada',
+    expectedVersion: withMsg.body.puzzle.version,
+  })
+  assert.equal(hintStep1.status, 201)
+
+  // Autor altera a resposta da etapa 1 antes de qualquer acerto
+  const editedBeforeSolve = await apiRequest(origin, author, `/api/author/steps/${step1.id}/content`, 'PATCH', {
+    prompt: 'Primeira charada revisada',
+    answer: 'estrela',
+    expectedVersion: withMsg.body.puzzle.version + 1,
+  })
+  assert.equal(editedBeforeSolve.status, 200)
+
+  const open1 = await apiRequest(origin, player1, '/api/play/puzzles/open', 'POST', { name: 'Relógio de Areia' })
+  assert.equal(open1.status, 200)
+
+  // Resposta antiga e resposta incorreta não avançam nem alteram versão
+  const oldAnswer = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    answer: 'sol',
+  })
+  assert.equal(oldAnswer.status, 200)
+  assert.equal(oldAnswer.body.correct, false)
+  assert.equal(oldAnswer.body.play.currentStep.id, step1.id)
+  assert.equal(oldAnswer.body.play.version, 1)
+
+  // Resposta vigente (normalizada) avança para etapa 2 e registra primeiro acerto global da etapa 1
+  const rightStep1 = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    answer: '  ESTRELA  ',
+  })
+  assert.equal(rightStep1.status, 200)
+  assert.equal(rightStep1.body.correct, true)
+  assert.equal(rightStep1.body.play.status, 'in_progress')
+  assert.equal(rightStep1.body.play.currentStep.id, step2.id)
+  assert.equal(rightStep1.body.play.currentStep.position, 2)
+  assert.equal(rightStep1.body.play.version, 2)
+
+  // Após o primeiro acerto global na etapa 1:
+  // 1) autor ainda edita enunciado da etapa 1 e resposta da etapa 2, mas resposta da etapa 1 permanece congelada
+  const authorAfterSolve = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}`)
+  assert.ok(authorAfterSolve.body.puzzle.steps[0].first_solved_at)
+  assert.equal(authorAfterSolve.body.puzzle.steps[1].first_solved_at, null)
+
+  const editStep1AfterSolve = await apiRequest(origin, author, `/api/author/steps/${step1.id}/content`, 'PATCH', {
+    prompt: 'Primeira charada pós-acerto',
+    answer: 'cometa',
+    expectedVersion: authorAfterSolve.body.puzzle.version,
+  })
+  assert.equal(editStep1AfterSolve.status, 200)
+  assert.equal(editStep1AfterSolve.body.puzzle.steps[0].prompt, 'Primeira charada pós-acerto')
+  assert.equal(editStep1AfterSolve.body.puzzle.steps[0].answer_text, 'estrela')
+
+  const editStep2BeforeSolve = await apiRequest(origin, author, `/api/author/steps/${step2.id}/content`, 'PATCH', {
+    prompt: 'Segunda charada revisada',
+    answer: 'aurora',
+    expectedVersion: editStep1AfterSolve.body.puzzle.version,
+  })
+  assert.equal(editStep2BeforeSolve.status, 200)
+  assert.equal(editStep2BeforeSolve.body.puzzle.steps[1].answer_text, 'aurora')
+
+  // Jogadora 2 ainda resolve a etapa 1 com 'estrela'
+  await apiRequest(origin, player2, '/api/play/puzzles/open', 'POST', { name: 'Relógio de Areia' })
+  const p2Step1 = await apiRequest(origin, player2, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    answer: 'estrela',
+  })
+  assert.equal(p2Step1.body.correct, true)
+  assert.equal(p2Step1.body.play.currentStep.id, step2.id)
+
+  // Jogadora 1 conclui o enigma na última etapa
+  const finishP1 = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    answer: 'aurora',
+  })
+  assert.equal(finishP1.status, 200)
+  assert.equal(finishP1.body.correct, true)
+  assert.equal(finishP1.body.play.status, 'completed')
+  assert.equal(finishP1.body.play.currentStep, null)
+  assert.equal(finishP1.body.play.finalMessage, 'Tempo concluído!')
+  assert.equal(finishP1.body.play.version, 3)
+
+  // Novo envio após conclusão retorna 409
+  const afterComplete = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    answer: 'aurora',
+  })
+  assert.equal(afterComplete.status, 409)
+  assert.equal(afterComplete.body.error.code, 'PUZZLE_ALREADY_COMPLETED')
+})
