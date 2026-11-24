@@ -169,6 +169,63 @@ export default function App() {
     await openDestination(target, csrfToken)
   }
 
+  async function handleRevealHint() {
+    if (!playState || playState.status !== 'in_progress' || !playState.currentStep) return
+
+    setErrorMessage('')
+    setStatusMessage('')
+
+    try {
+      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}/hints/reveal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+        },
+        body: JSON.stringify({
+          stepId: playState.currentStep.id,
+          expectedVersion: playState.version,
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (res.status === 401) {
+        handleSessionExpired()
+        return
+      }
+
+      if (res.status === 409 && data?.error?.code === 'STALE_PROGRESS') {
+        if (data.play) {
+          setPlayState(data.play)
+        } else {
+          const refreshRes = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json()
+            if (refreshData.play) setPlayState(refreshData.play)
+          }
+        }
+        setErrorMessage(data?.error?.message || 'O estado da partida mudou. Etapa atualizada.')
+        return
+      }
+
+      if (!res.ok) {
+        setErrorMessage(data?.error?.message || 'Não foi possível revelar a dica.')
+        return
+      }
+
+      if (data.play) {
+        setPlayState(data.play)
+      }
+
+      if (data.exhausted || data.play?.currentStep?.hasMoreHints === false) {
+        setStatusMessage('Não há mais dicas disponíveis para esta etapa.')
+      }
+    } catch {
+      setErrorMessage('Falha de comunicação ao solicitar a dica. Tente novamente.')
+    }
+  }
+
   async function handleIdentifySubmit(event) {
     event.preventDefault()
     if (authState.phase === 'submitting') return
@@ -323,6 +380,12 @@ export default function App() {
 
     setErrorMessage('')
     setStatusMessage('')
+
+    if (normalizedCommand === '/dica') {
+      setInputValue('')
+      await handleRevealHint()
+      return
+    }
 
     try {
       const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}/answer`, {
@@ -548,6 +611,22 @@ export default function App() {
             {playState.currentStep.prompt}
           </p>
 
+          {Array.isArray(playState.currentStep.revealedHints) && playState.currentStep.revealedHints.length > 0 && (
+            <div aria-label="Dicas reveladas">
+              {playState.currentStep.revealedHints.map((hint) => (
+                <p key={hint.id} className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+                  Dica {hint.position}: {hint.text}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {playState.currentStep.hasMoreHints === false && (
+            <p className="nexo-warning">
+              Não há mais dicas disponíveis para esta etapa.
+            </p>
+          )}
+
           <label htmlFor="play-answer" className="nexo-label">
             Resposta
           </label>
@@ -568,6 +647,15 @@ export default function App() {
             <button type="submit" className="nexo-btn-primary">
               Enviar
             </button>
+            {playState.currentStep.hasMoreHints !== false && (
+              <button
+                type="button"
+                className="nexo-btn-secondary"
+                onClick={handleRevealHint}
+              >
+                Pedir dica
+              </button>
+            )}
             <button
               type="button"
               className="nexo-btn-secondary"
@@ -617,3 +705,4 @@ export default function App() {
     </main>
   )
 }
+
