@@ -217,5 +217,22 @@ export function createAuthRouter({ repositories }) {
     })
   })
 
+  router.post('/logout', (request, response, next) => {
+    if (!request.session) {
+      response.json({ user: null, csrfToken: createCsrfToken() })
+      return
+    }
+
+    request.session.destroy((error) => {
+      if (error) {
+        next(error)
+        return
+      }
+
+      const nextCsrfToken = createCsrfToken()
+      response.json({ user: null, csrfToken: nextCsrfToken })
+    })
+  })
+
   return router
 }

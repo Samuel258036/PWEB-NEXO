@@ -1,17 +1,30 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
   IDENTIFY_MESSAGES,
   createInitialIdentificationState,
   identificationReducer,
 } from './identification.js'
 
+const DISCREET_AUTHOR_COMMAND = '/autoria'
+
+function resolveDestinationFromIntent(rawIntent) {
+  const trimmed = rawIntent.trim()
+  if (trimmed.toLowerCase() === DISCREET_AUTHOR_COMMAND) {
+    return { kind: 'author', label: 'Área de criação' }
+  }
+  return { kind: 'play', name: trimmed, label: trimmed }
+}
+
 export default function App() {
-  const [screen, setScreen] = useState('entry') // 'entry' | 'identify' | 'ready'
+  const [screen, setScreen] = useState('entry') // 'entry' | 'identify' | 'play' | 'author'
   const [entryValue, setEntryValue] = useState('')
   const [inputValue, setInputValue] = useState('')
   const [passwordValue, setPasswordValue] = useState('')
   const [csrfToken, setCsrfToken] = useState('')
   const [sessionUser, setSessionUser] = useState(null)
+  const [playState, setPlayState] = useState(null)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
 
   const [authState, dispatchAuth] = useReducer(
     identificationReducer,
@@ -22,6 +35,83 @@ export default function App() {
   const inputRef = useRef(null)
   const passwordRef = useRef(null)
 
+  const handleSessionExpired = useCallback((message = 'Sua sessão expirou ou foi encerrada. Identifique-se novamente.') => {
+    setSessionUser(null)
+    setPlayState(null)
+    setInputValue('')
+    setPasswordValue('')
+    dispatchAuth({ type: 'RESET_TO_USERNAME', notice: message })
+    setScreen('identify')
+  }, [])
+
+  const openDestination = useCallback(async (target, activeCsrfToken) => {
+    setErrorMessage('')
+    setStatusMessage('')
+
+    if (!target) {
+      setScreen('entry')
+      return
+    }
+
+    if (target.kind === 'author') {
+      setScreen('author')
+      return
+    }
+
+    try {
+      const res = await fetch('/api/play/puzzles/open', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(activeCsrfToken ? { 'X-CSRF-Token': activeCsrfToken } : {}),
+        },
+        body: JSON.stringify({ name: target.name }),
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (res.status === 401) {
+        handleSessionExpired()
+        return
+      }
+
+      if (!res.ok) {
+        setPlayState(null)
+        setErrorMessage(data?.error?.message || 'Não foi possível abrir esse destino.')
+        setScreen('entry')
+        return
+      }
+
+      setPlayState(data.play)
+      setScreen('play')
+    } catch {
+      setErrorMessage('Falha de comunicação ao abrir o destino. Tente novamente.')
+      setScreen('entry')
+    }
+  }, [handleSessionExpired])
+
+  const syncSession = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/session')
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.csrfToken) {
+        setCsrfToken(data.csrfToken)
+      }
+      if (data.user) {
+        setSessionUser(data.user)
+      } else {
+        setSessionUser((prevUser) => {
+          if (prevUser && (screen === 'play' || screen === 'author')) {
+            handleSessionExpired()
+          }
+          return null
+        })
+      }
+    } catch {
+      // ignora falha transitória de rede na verificação silenciosa
+    }
+  }, [handleSessionExpired, screen])
+
   useEffect(() => {
     let active = true
     fetch('/api/auth/session')
@@ -29,13 +119,25 @@ export default function App() {
       .then((data) => {
         if (!active || !data) return
         if (data.csrfToken) setCsrfToken(data.csrfToken)
-        if (data.user) setSessionUser(data.user)
+        setSessionUser(data.user ?? null)
       })
       .catch(() => {})
+
+    const onFocusOrVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncSession()
+      }
+    }
+
+    window.addEventListener('focus', onFocusOrVisibility)
+    document.addEventListener('visibilitychange', onFocusOrVisibility)
+
     return () => {
       active = false
+      window.removeEventListener('focus', onFocusOrVisibility)
+      document.removeEventListener('visibilitychange', onFocusOrVisibility)
     }
-  }, [])
+  }, [syncSession])
 
   useEffect(() => {
     if (screen === 'identify' && authState.phase === 'password') {
@@ -43,25 +145,28 @@ export default function App() {
       return
     }
     inputRef.current?.focus()
-  }, [screen, authState.phase])
+  }, [screen, authState.phase, playState?.currentStep?.id])
 
-  function handleEntrySubmit(event) {
+  async function handleEntrySubmit(event) {
     event.preventDefault()
     const trimmed = entryValue.trim()
     if (!trimmed) return
 
-    const intendedTarget = { intent: trimmed }
-    dispatchAuth({ type: 'SET_INTENDED_TARGET', target: intendedTarget })
+    const target = resolveDestinationFromIntent(trimmed)
+    dispatchAuth({ type: 'SET_INTENDED_TARGET', target })
+    setErrorMessage('')
+    setStatusMessage('')
+    setEntryValue('')
 
-    if (sessionUser) {
-      setScreen('ready')
+    if (!sessionUser) {
+      setInputValue('')
+      setPasswordValue('')
+      dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
+      setScreen('identify')
       return
     }
 
-    setInputValue('')
-    setPasswordValue('')
-    dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
-    setScreen('identify')
+    await openDestination(target, csrfToken)
   }
 
   async function handleIdentifySubmit(event) {
@@ -146,9 +251,16 @@ export default function App() {
           })
           return
         }
+
+        const nextCsrf = data.csrfToken || csrfToken
         if (data.csrfToken) setCsrfToken(data.csrfToken)
         if (data.user) setSessionUser(data.user)
-        setScreen('ready')
+
+        if (authState.intendedTarget) {
+          await openDestination(authState.intendedTarget, nextCsrf)
+        } else {
+          setScreen('entry')
+        }
       } catch {
         dispatchAuth({
           type: 'REQUEST_FAILED',
@@ -156,6 +268,42 @@ export default function App() {
         })
       }
     }
+  }
+
+  async function handleLogout() {
+    setErrorMessage('')
+    try {
+      const res = await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+        },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (data?.csrfToken) {
+        setCsrfToken(data.csrfToken)
+      }
+    } catch {
+      // mesmo em falha de rede, limpa sessão local e exige nova identificação
+    }
+
+    setSessionUser(null)
+    setPlayState(null)
+    setStatusMessage('Sessão encerrada.')
+    setScreen('entry')
+  }
+
+  async function handleSwitchDestination(nextTarget) {
+    dispatchAuth({ type: 'SET_INTENDED_TARGET', target: nextTarget })
+    if (!sessionUser) {
+      setInputValue('')
+      setPasswordValue('')
+      dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
+      setScreen('identify')
+      return
+    }
+    await openDestination(nextTarget, csrfToken)
   }
 
   if (screen === 'entry') {
@@ -178,6 +326,33 @@ export default function App() {
             />
           </div>
         </form>
+
+        {errorMessage && (
+          <p className="nexo-error" role="alert">{errorMessage}</p>
+        )}
+
+        {statusMessage && (
+          <p className="nexo-status" role="status">{statusMessage}</p>
+        )}
+
+        {sessionUser && (
+          <div className="nexo-actions">
+            <button
+              type="button"
+              className="nexo-btn-secondary"
+              onClick={() => handleSwitchDestination({ kind: 'author', label: 'Área de criação' })}
+            >
+              Criar / autoria
+            </button>
+            <button
+              type="button"
+              className="nexo-btn-secondary"
+              onClick={handleLogout}
+            >
+              Sair
+            </button>
+          </div>
+        )}
       </main>
     )
   }
@@ -265,17 +440,69 @@ export default function App() {
     )
   }
 
+  if (screen === 'author') {
+    return (
+      <main className="nexo-shell">
+        <h1 className="nexo-prompt-heading">Seus enigmas</h1>
+        {sessionUser && (
+          <p className="nexo-status">Conta: {sessionUser.usernameDisplay}</p>
+        )}
+        <div className="nexo-actions">
+          <button
+            type="button"
+            className="nexo-btn-secondary"
+            onClick={() => setScreen('entry')}
+          >
+            Trocar destino
+          </button>
+          <button
+            type="button"
+            className="nexo-btn-secondary"
+            onClick={handleLogout}
+          >
+            Sair
+          </button>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="nexo-shell">
-      <h1 className="nexo-prompt-heading">Destino preservado</h1>
-      <p className="nexo-status">
-        Intenção: {authState.intendedTarget?.intent ?? ''}
-      </p>
-      {sessionUser && (
-        <p className="nexo-status">
-          Conta: {sessionUser.usernameDisplay}
+      <h1 className="nexo-prompt-heading">{playState?.puzzle?.name ?? 'Partida'}</h1>
+      {playState?.currentStep && (
+        <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+          {playState.currentStep.prompt}
         </p>
       )}
+      {playState?.status === 'completed' && (
+        <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+          {playState.finalMessage || 'Enigma concluído.'}
+        </p>
+      )}
+      <div className="nexo-actions">
+        <button
+          type="button"
+          className="nexo-btn-secondary"
+          onClick={() => setScreen('entry')}
+        >
+          Trocar destino
+        </button>
+        <button
+          type="button"
+          className="nexo-btn-secondary"
+          onClick={() => handleSwitchDestination({ kind: 'author', label: 'Área de criação' })}
+        >
+          Criar / autoria
+        </button>
+        <button
+          type="button"
+          className="nexo-btn-secondary"
+          onClick={handleLogout}
+        >
+          Sair
+        </button>
+      </div>
     </main>
   )
 }
