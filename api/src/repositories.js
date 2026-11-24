@@ -16,6 +16,47 @@ export class VersionConflictError extends Error {
   }
 }
 
+function buildPlayDto(userId, puzzleId) {
+    const state = findPlayStateByUserAndPuzzle.get(userId, puzzleId)
+    if (!state) return null
+
+    if (state.completed_at !== null) {
+      return {
+        puzzle: {
+          id: state.puzzle_id,
+          name: state.name_display,
+        },
+        status: 'completed',
+        version: state.version,
+        currentStep: null,
+        finalMessage: state.final_message || null,
+      }
+    }
+
+    const step = findPlayStepById.get(state.current_step_id, state.puzzle_id)
+    if (!step) return null
+
+    const revealedHints = findRevealedHintsForProgressStep.all(state.progress_id, step.id)
+    const { total: totalHints } = countHintsForStep.get(step.id)
+
+    return {
+      puzzle: {
+        id: state.puzzle_id,
+        name: state.name_display,
+      },
+      status: 'in_progress',
+      version: state.version,
+      currentStep: {
+        id: step.id,
+        position: step.position,
+        prompt: step.prompt,
+        revealedHints,
+        hasMoreHints: totalHints > revealedHints.length,
+      },
+      finalMessage: null,
+    }
+  }
+
 function insertRelatedResource(statement, values, action) {
   const result = statement.run(values)
 

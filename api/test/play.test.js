@@ -208,3 +208,134 @@ test('isola o progresso entre duas contas diferentes no mesmo enigma publicado',
   assert.equal(reopenB.body.play.currentStep.id, step1.id)
   assert.equal(reopenB.body.play.version, 1)
 })
+
+test('consulta etapa atual e conclusão sem expor respostas, outras etapas ou dicas ocultas (inclusive para o autor)', async (context) => {
+  const { origin, accounts, database } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player = await login(origin, 'jogadora1')
+
+  const created = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Cofre do Observatório' })
+  const puzzleId = created.body.puzzle.id
+
+  const saved = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Cofre do Observatório',
+    version: 1,
+    steps: [
+      { prompt: 'Enunciado etapa 1', answer: 'segredo-um' },
+      { prompt: 'Enunciado etapa 2', answer: 'segredo-dois' },
+      { prompt: 'Enunciado etapa 3', answer: 'segredo-tres' },
+    ],
+  })
+  const published = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: saved.body.puzzle.version,
+  })
+  const [step1, step2] = published.body.puzzle.steps
+
+  const withMessage = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/final-message`, 'PATCH', {
+    finalMessage: 'Você decifrou o observatório.',
+    expectedVersion: published.body.puzzle.version,
+  })
+  assert.equal(withMessage.status, 200)
+
+  const h1 = await apiRequest(origin, author, `/api/author/steps/${step1.id}/hints`, 'POST', {
+    text: 'Dica 1 visível',
+    expectedVersion: withMessage.body.puzzle.version,
+  })
+  const h2 = await apiRequest(origin, author, `/api/author/steps/${step2.id}/hints`, 'POST', {
+    text: 'Dica 2 revelada',
+    expectedVersion: withMessage.body.puzzle.version + 1,
+  })
+  const h3 = await apiRequest(origin, author, `/api/author/steps/${step2.id}/hints`, 'POST', {
+    text: 'Dica 2 oculta',
+    expectedVersion: withMessage.body.puzzle.version + 2,
+  })
+  assert.equal(h1.status, 201)
+  assert.equal(h2.status, 201)
+  assert.equal(h3.status, 201)
+
+  // Antes de abrir partida, GET retorna indisponível
+  const beforeOpen = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(beforeOpen.status, 404)
+  assert.equal(beforeOpen.body.error.code, 'PUZZLE_UNAVAILABLE')
+
+  // Abre partida como jogadora e avança para etapa 2 com apenas a primeira dica da etapa 2 revelada
+  const opened = await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Cofre do Observatório' })
+  assert.equal(opened.status, 200)
+
+  const progressRow = database
+    .prepare('SELECT id FROM progress WHERE user_id = ? AND puzzle_id = ?')
+    .get(accounts.jogadora1, puzzleId)
+
+  database.prepare('INSERT INTO hint_reveals (progress_id, hint_id) VALUES (?, ?)').run(progressRow.id, h1.body.hints[0].id)
+  database.prepare('UPDATE progress SET current_step_id = ?, version = 2 WHERE id = ?').run(step2.id, progressRow.id)
+  database.prepare('INSERT INTO hint_reveals (progress_id, hint_id) VALUES (?, ?)').run(progressRow.id, h2.body.hints[0].id)
+
+  const midGame = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(midGame.status, 200)
+  assert.deepEqual(midGame.body.play, {
+    puzzle: { id: puzzleId, name: 'Cofre do Observatório' },
+    status: 'in_progress',
+    version: 2,
+    currentStep: {
+      id: step2.id,
+      position: 2,
+      prompt: 'Enunciado etapa 2',
+      revealedHints: [{ id: h2.body.hints[0].id, position: 1, text: 'Dica 2 revelada' }],
+      hasMoreHints: true,
+    },
+    finalMessage: null,
+  })
+
+  const midSerialized = JSON.stringify(midGame.body)
+  for (const forbidden of [
+    'segredo-um',
+    'segredo-dois',
+    'segredo-tres',
+    'Enunciado etapa 1',
+    'Enunciado etapa 3',
+    'Dica 1 visível',
+    'Dica 2 oculta',
+    'Você decifrou o observatório.',
+  ]) {
+    assert.equal(midSerialized.includes(forbidden), false)
+  }
+
+  // O próprio autor jogando recebe exatamente o mesmo DTO restrito, sem respostas ou dicas ocultas
+  const authorOpen = await apiRequest(origin, author, '/api/play/puzzles/open', 'POST', { name: 'Cofre do Observatório' })
+  assert.equal(authorOpen.status, 200)
+  const authorRead = await apiRequest(origin, author, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(authorRead.status, 200)
+  assert.deepEqual(authorRead.body.play, {
+    puzzle: { id: puzzleId, name: 'Cofre do Observatório' },
+    status: 'in_progress',
+    version: 1,
+    currentStep: {
+      id: step1.id,
+      position: 1,
+      prompt: 'Enunciado etapa 1',
+      revealedHints: [],
+      hasMoreHints: true,
+    },
+    finalMessage: null,
+  })
+  const authorSerialized = JSON.stringify(authorRead.body)
+  assert.equal(authorSerialized.includes('segredo-um'), false)
+  assert.equal(authorSerialized.includes('Dica 1 visível'), false)
+  assert.equal(authorSerialized.includes('Enunciado etapa 2'), false)
+
+  // Conclui a partida da jogadora e consulta o DTO final
+  database.prepare('UPDATE progress SET current_step_id = NULL, completed_at = CURRENT_TIMESTAMP, version = 4 WHERE id = ?').run(progressRow.id)
+
+  const finished = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(finished.status, 200)
+  assert.deepEqual(finished.body.play, {
+    puzzle: { id: puzzleId, name: 'Cofre do Observatório' },
+    status: 'completed',
+    version: 4,
+    currentStep: null,
+    finalMessage: 'Você decifrou o observatório.',
+  })
+  const finishedSerialized = JSON.stringify(finished.body)
+  assert.equal(finishedSerialized.includes('segredo-tres'), false)
+  assert.equal(finishedSerialized.includes('Enunciado etapa 2'), false)
+})

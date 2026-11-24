@@ -36,5 +36,21 @@ export function createPlayRouter({ repositories }) {
     response.json({ play })
   })
 
+  router.get('/puzzles/:id', (request, response) => {
+    const puzzleId = Number(request.params.id)
+    if (!Number.isSafeInteger(puzzleId) || puzzleId < 1) {
+      sendError(response, 404, 'PUZZLE_UNAVAILABLE', 'Enigma não encontrado ou indisponível.')
+      return
+    }
+
+    const play = repositories.progress.readPlayState(request.session.userId, puzzleId)
+    if (!play) {
+      sendError(response, 404, 'PUZZLE_UNAVAILABLE', 'Enigma não encontrado ou indisponível.')
+      return
+    }
+
+    response.json({ play })
+  })
+
   return router
 }
