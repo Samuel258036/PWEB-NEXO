@@ -24,3 +24,4 @@
 - [5.5 — Revelação de dicas por ID na ordem atual](define-puzzle-platform-mvp/5.5.md)
 - [5.6 — Corridas HTTP concorrentes e recriação de enigma](define-puzzle-platform-mvp/5.6.md)
 - [5.7 — Documentação da API de jogo e validação de contratos](define-puzzle-platform-mvp/5.7.md)
+- [6.1 — Layout textual responsivo e reducer de identificação](define-puzzle-platform-mvp/6.1.md)
