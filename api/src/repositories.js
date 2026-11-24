@@ -1,3 +1,5 @@
+import { runInImmediateTransaction } from './transactions.js'
+
 export class RepositoryReferenceError extends Error {
   constructor(action) {
     super(`Não foi possível ${action}: o recurso não existe ou não pertence à conta/enigma informado.`)
@@ -66,6 +68,12 @@ export function createRepositories(database) {
     FROM puzzles WHERE author_id = ? ORDER BY updated_at DESC, id DESC
   `)
   const findPuzzleByIdAndAuthorForRead = findPuzzleByIdAndAuthor
+  const findPublishedPuzzleByNameKey = database.prepare(`
+    SELECT id, author_id, name_display, name_key, status, final_message, version,
+           created_at, updated_at, published_at
+    FROM puzzles
+    WHERE name_key = ? AND status = 'published'
+  `)
   const findStepsByPuzzleAndAuthor = database.prepare(`
     SELECT steps.id, steps.position, steps.prompt, steps.answer_text, steps.answer_key,
            steps.first_solved_at
@@ -140,6 +148,87 @@ export function createRepositories(database) {
       AND progress.user_id = @userId
       AND hints.id = @hintId
   `)
+  const findFirstStepByPuzzle = database.prepare(`
+    SELECT id, position, prompt
+    FROM steps
+    WHERE puzzle_id = ?
+    ORDER BY position ASC
+    LIMIT 1
+  `)
+  const findPlayStateByUserAndPuzzle = database.prepare(`
+    SELECT
+      progress.id AS progress_id,
+      progress.user_id,
+      progress.puzzle_id,
+      progress.current_step_id,
+      progress.completed_at,
+      progress.version,
+      puzzles.name_display,
+      puzzles.final_message
+    FROM progress
+    JOIN puzzles ON puzzles.id = progress.puzzle_id
+    WHERE progress.user_id = ?
+      AND progress.puzzle_id = ?
+      AND puzzles.status = 'published'
+  `)
+  const findPlayStepById = database.prepare(`
+    SELECT id, position, prompt
+    FROM steps
+    WHERE id = ? AND puzzle_id = ?
+  `)
+  const findRevealedHintsForProgressStep = database.prepare(`
+    SELECT hints.id, hints.position, hints.text
+    FROM hint_reveals
+    JOIN hints ON hints.id = hint_reveals.hint_id
+    WHERE hint_reveals.progress_id = ? AND hints.step_id = ?
+    ORDER BY hints.position ASC
+  `)
+  const countHintsForStep = database.prepare(`
+    SELECT COUNT(*) AS total
+    FROM hints
+    WHERE step_id = ?
+  `)
+
+  function buildPlayDto(userId, puzzleId) {
+    const state = findPlayStateByUserAndPuzzle.get(userId, puzzleId)
+    if (!state) return null
+
+    if (state.completed_at !== null) {
+      return {
+        puzzle: {
+          id: state.puzzle_id,
+          name: state.name_display,
+        },
+        status: 'completed',
+        version: state.version,
+        currentStep: null,
+        finalMessage: state.final_message ?? null,
+      }
+    }
+
+    const step = findPlayStepById.get(state.current_step_id, state.puzzle_id)
+    if (!step) return null
+
+    const revealedHints = findRevealedHintsForProgressStep.all(state.progress_id, step.id)
+    const { total: totalHints } = countHintsForStep.get(step.id)
+
+    return {
+      puzzle: {
+        id: state.puzzle_id,
+        name: state.name_display,
+      },
+      status: 'in_progress',
+      version: state.version,
+      currentStep: {
+        id: step.id,
+        position: step.position,
+        prompt: step.prompt,
+        revealedHints,
+        hasMoreHints: totalHints > revealedHints.length,
+      },
+      finalMessage: null,
+    }
+  }
 
   return {
     users: {
@@ -162,6 +251,9 @@ export function createRepositories(database) {
       },
       findByIdForAuthor(puzzleId, authorId) {
         return findPuzzleByIdAndAuthor.get(puzzleId, authorId)
+      },
+      findPublishedByNameKey(nameKey) {
+        return findPublishedPuzzleByNameKey.get(nameKey)
       },
       readForAuthor(puzzleId, authorId) {
         const puzzle = findPuzzleByIdAndAuthorForRead.get(puzzleId, authorId)
@@ -304,7 +396,29 @@ export function createRepositories(database) {
       addHintReveal({ userId, progressId, hintId }) {
         return insertRelatedResource(insertHintReveal, { userId, progressId, hintId }, 'revelar a dica')
       },
+      openPublishedByName({ userId, nameKey }) {
+        return runInImmediateTransaction(database, () => {
+          const puzzle = findPublishedPuzzleByNameKey.get(nameKey)
+          if (!puzzle) return null
+
+          const existing = findProgressByUserAndPuzzle.get(userId, puzzle.id)
+          if (!existing) {
+            const firstStep = findFirstStepByPuzzle.get(puzzle.id)
+            if (!firstStep) return null
+
+            insertProgress.run({
+              userId,
+              puzzleId: puzzle.id,
+              currentStepId: firstStep.id,
+            })
+          }
+
+          return buildPlayDto(userId, puzzle.id)
+        })
+      },
+      readPlayState(userId, puzzleId) {
+        return buildPlayDto(userId, puzzleId)
+      },
     },
   }
 }
-import { runInImmediateTransaction } from './transactions.js'

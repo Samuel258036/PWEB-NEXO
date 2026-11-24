@@ -17,3 +17,4 @@
 - [4.4. Manter o conteúdo publicado](define-puzzle-platform-mvp/4.4.md)
 - [4.5. Excluir um enigma](define-puzzle-platform-mvp/4.5.md)
 - [4.6. Consultar contratos da API de autoria](define-puzzle-platform-mvp/4.6.md)
+- [5.1 — Resolução exata de publicado e abertura idempotente da partida](define-puzzle-platform-mvp/5.1.md)
