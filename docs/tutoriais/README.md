@@ -28,3 +28,4 @@
 - [6.2 — Sessão real, entrada por nome, comando discreto e logout](define-puzzle-platform-mvp/6.2.md)
 - [6.3 — Etapa atual, campo de resposta e /inicio](define-puzzle-platform-mvp/6.3.md)
 - [6.4 — /dica, dicas visíveis e estado de esgotamento](define-puzzle-platform-mvp/6.4.md)
+- [6.5 — Conclusão e mensagem personalizada/padrão vigente](define-puzzle-platform-mvp/6.5.md)

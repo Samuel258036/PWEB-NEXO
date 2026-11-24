@@ -440,6 +440,41 @@ export default function App() {
     }
   }
 
+  const DEFAULT_COMPLETION_MESSAGE = 'Enigma concluído.'
+
+  const resolveCompletionMessage = (play) => {
+    if (!play) return DEFAULT_COMPLETION_MESSAGE
+    const customMessage = typeof play.finalMessage === 'string' ? play.finalMessage.trim() : ''
+    return customMessage.length > 0 ? play.finalMessage : DEFAULT_COMPLETION_MESSAGE
+  }
+
+  async function handleRefreshCompletedPlay() {
+    if (!playState?.puzzle?.id) return
+    setErrorMessage('')
+    setStatusMessage('')
+
+    try {
+      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
+      const data = await res.json().catch(() => ({}))
+
+      if (res.status === 401) {
+        handleSessionExpired()
+        return
+      }
+
+      if (!res.ok) {
+        setErrorMessage(data?.error?.message || 'Não foi possível atualizar a conclusão.')
+        return
+      }
+
+      if (data.play) {
+        setPlayState(data.play)
+      }
+    } catch {
+      setErrorMessage('Falha de comunicação ao atualizar a conclusão.')
+    }
+  }
+
   if (screen === 'entry') {
     return (
       <main className="nexo-shell">
@@ -673,9 +708,20 @@ export default function App() {
       )}
 
       {playState?.status === 'completed' && (
-        <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
-          {playState.finalMessage || 'Enigma concluído.'}
-        </p>
+        <div>
+          <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+            {resolveCompletionMessage(playState)}
+          </p>
+          <div className="nexo-actions">
+            <button
+              type="button"
+              className="nexo-btn-secondary"
+              onClick={handleRefreshCompletedPlay}
+            >
+              Atualizar mensagem
+            </button>
+          </div>
+        </div>
       )}
 
       {errorMessage && (
