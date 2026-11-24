@@ -386,6 +386,8 @@ test('valida respostas, avança e conclui de forma transacional e bloqueia somen
 
   // Resposta antiga e resposta incorreta não avançam nem alteram versão
   const oldAnswer = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step1.id,
+    expectedVersion: 1,
     answer: 'sol',
   })
   assert.equal(oldAnswer.status, 200)
@@ -395,6 +397,8 @@ test('valida respostas, avança e conclui de forma transacional e bloqueia somen
 
   // Resposta vigente (normalizada) avança para etapa 2 e registra primeiro acerto global da etapa 1
   const rightStep1 = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step1.id,
+    expectedVersion: 1,
     answer: '  ESTRELA  ',
   })
   assert.equal(rightStep1.status, 200)
@@ -430,6 +434,8 @@ test('valida respostas, avança e conclui de forma transacional e bloqueia somen
   // Jogadora 2 ainda resolve a etapa 1 com 'estrela'
   await apiRequest(origin, player2, '/api/play/puzzles/open', 'POST', { name: 'Relógio de Areia' })
   const p2Step1 = await apiRequest(origin, player2, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step1.id,
+    expectedVersion: 1,
     answer: 'estrela',
   })
   assert.equal(p2Step1.body.correct, true)
@@ -437,6 +443,8 @@ test('valida respostas, avança e conclui de forma transacional e bloqueia somen
 
   // Jogadora 1 conclui o enigma na última etapa
   const finishP1 = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step2.id,
+    expectedVersion: 2,
     answer: 'aurora',
   })
   assert.equal(finishP1.status, 200)
@@ -446,10 +454,94 @@ test('valida respostas, avança e conclui de forma transacional e bloqueia somen
   assert.equal(finishP1.body.play.finalMessage, 'Tempo concluído!')
   assert.equal(finishP1.body.play.version, 3)
 
-  // Novo envio após conclusão retorna 409
+  // Novo envio após conclusão retorna 409 STALE_PROGRESS
   const afterComplete = await apiRequest(origin, player1, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step2.id,
+    expectedVersion: 3,
     answer: 'aurora',
   })
   assert.equal(afterComplete.status, 409)
-  assert.equal(afterComplete.body.error.code, 'PUZZLE_ALREADY_COMPLETED')
+  assert.equal(afterComplete.body.error.code, 'STALE_PROGRESS')
+})
+
+test('impede avanço duplicado em duplo clique/retry, duas abas e etapas consecutivas com a mesma resposta, permitindo recarga após STALE_PROGRESS', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const player = await login(origin, 'jogadora1')
+
+  const created = await apiRequest(origin, author, '/api/author/puzzles', 'POST', { name: 'Ecos Idênticos' })
+  const puzzleId = created.body.puzzle.id
+
+  // Três etapas consecutivas com a exata mesma resposta ("eco")
+  const saved = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Ecos Idênticos',
+    version: 1,
+    steps: [
+      { prompt: 'Primeiro eco', answer: 'eco' },
+      { prompt: 'Segundo eco', answer: 'eco' },
+      { prompt: 'Terceiro eco', answer: 'eco' },
+    ],
+  })
+  const published = await apiRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: saved.body.puzzle.version,
+  })
+  const [step1, step2, step3] = published.body.puzzle.steps
+
+  const opened = await apiRequest(origin, player, '/api/play/puzzles/open', 'POST', { name: 'Ecos Idênticos' })
+  assert.equal(opened.status, 200)
+  assert.equal(opened.body.play.currentStep.id, step1.id)
+  assert.equal(opened.body.play.version, 1)
+
+  // Duplo clique / retry concorrente enviando o mesmo (stepId, expectedVersion) duas vezes
+  const [firstClick, duplicateClick] = await Promise.all([
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+      stepId: step1.id,
+      expectedVersion: 1,
+      answer: 'eco',
+    }),
+    apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+      stepId: step1.id,
+      expectedVersion: 1,
+      answer: 'eco',
+    }),
+  ])
+
+  const responses = [firstClick, duplicateClick]
+  const succeeded = responses.find((r) => r.status === 200)
+  const stale = responses.find((r) => r.status === 409)
+
+  assert.ok(succeeded)
+  assert.ok(stale)
+  assert.equal(succeeded.body.correct, true)
+  assert.equal(succeeded.body.play.currentStep.id, step2.id)
+  assert.equal(succeeded.body.play.version, 2)
+
+  assert.equal(stale.body.error.code, 'STALE_PROGRESS')
+  assert.equal(stale.body.play.currentStep.id, step2.id)
+  assert.equal(stale.body.play.version, 2)
+
+  // Segunda aba desatualizada tenta enviar para step1 (version 1) e recebe STALE_PROGRESS sem pular step2
+  const secondTabStale = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: step1.id,
+    expectedVersion: 1,
+    answer: 'eco',
+  })
+  assert.equal(secondTabStale.status, 409)
+  assert.equal(secondTabStale.body.error.code, 'STALE_PROGRESS')
+
+  // Recarrega o estado atual e avança legitimamente da etapa 2 para a etapa 3
+  const reloaded = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}`)
+  assert.equal(reloaded.status, 200)
+  assert.equal(reloaded.body.play.currentStep.id, step2.id)
+  assert.equal(reloaded.body.play.version, 2)
+
+  const advanceToStep3 = await apiRequest(origin, player, `/api/play/puzzles/${puzzleId}/answer`, 'POST', {
+    stepId: reloaded.body.play.currentStep.id,
+    expectedVersion: reloaded.body.play.version,
+    answer: 'eco',
+  })
+  assert.equal(advanceToStep3.status, 200)
+  assert.equal(advanceToStep3.body.correct, true)
+  assert.equal(advanceToStep3.body.play.currentStep.id, step3.id)
+  assert.equal(advanceToStep3.body.play.version, 3)
 })

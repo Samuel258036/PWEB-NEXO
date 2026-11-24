@@ -1,9 +1,9 @@
 import express from 'express'
 import { validateAnswer, validatePuzzleName } from './validation.js'
-import { VersionConflictError } from './repositories.js'
+import { StaleProgressError, VersionConflictError } from './repositories.js'
 
-function sendError(response, status, code, message) {
-  response.status(status).json({ error: { code, message } })
+function sendError(response, status, code, message, extra = {}) {
+  response.status(status).json({ error: { code, message }, ...extra })
 }
 
 export function createPlayRouter({ repositories }) {
@@ -65,6 +65,16 @@ export function createPlayRouter({ repositories }) {
       return
     }
 
+    const { stepId, expectedVersion } = request.body
+    if (!Number.isSafeInteger(stepId) || stepId < 1) {
+      sendError(response, 400, 'INVALID_FIELD', 'Informe o identificador da etapa atual.')
+      return
+    }
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+      sendError(response, 400, 'INVALID_VERSION', 'Informe a versão atual do progresso.')
+      return
+    }
+
     let answer
     try {
       answer = validateAnswer(request.body.answer, { allowEmpty: false })
@@ -78,6 +88,8 @@ export function createPlayRouter({ repositories }) {
       const result = repositories.progress.submitAnswer({
         userId: request.session.userId,
         puzzleId,
+        stepId,
+        expectedVersion,
         answerKey: answer.key,
       })
 
@@ -88,8 +100,8 @@ export function createPlayRouter({ repositories }) {
 
       response.json(result)
     } catch (error) {
-      if (error?.code === 'PUZZLE_ALREADY_COMPLETED') {
-        sendError(response, 409, error.code, error.message)
+      if (error instanceof StaleProgressError) {
+        sendError(response, 409, error.code, error.message, { play: error.play })
       } else if (error instanceof VersionConflictError) {
         sendError(response, 409, error.code, error.message)
       } else {

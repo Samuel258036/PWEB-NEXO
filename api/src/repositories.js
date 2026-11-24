@@ -1,5 +1,14 @@
 import { runInImmediateTransaction } from './transactions.js'
 
+export class StaleProgressError extends Error {
+  constructor(play = null) {
+    super('O progresso da partida mudou desde a última leitura. Recarregue a etapa atual e tente novamente.')
+    this.name = 'StaleProgressError'
+    this.code = 'STALE_PROGRESS'
+    this.play = play
+  }
+}
+
 export class RepositoryReferenceError extends Error {
   constructor(action) {
     super(`Não foi possível ${action}: o recurso não existe ou não pertence à conta/enigma informado.`)
@@ -475,15 +484,18 @@ export function createRepositories(database) {
       },
     },
     progress: {
-      submitAnswer({ userId, puzzleId, answerKey }) {
+      submitAnswer({ userId, puzzleId, stepId, expectedVersion, answerKey }) {
         return runInImmediateTransaction(database, () => {
           const current = findProgressForSubmit.get(userId, puzzleId)
           if (!current) return null
 
-          if (current.completed_at !== null || current.current_step_id === null) {
-            const error = new Error('Esta partida já foi concluída.')
-            error.code = 'PUZZLE_ALREADY_COMPLETED'
-            throw error
+          if (
+            current.completed_at !== null ||
+            current.current_step_id === null ||
+            current.current_step_id !== stepId ||
+            current.version !== expectedVersion
+          ) {
+            throw new StaleProgressError(buildPlayDto(userId, puzzleId))
           }
 
           const step = findStepForSubmit.get(current.current_step_id, puzzleId)
@@ -510,14 +522,18 @@ export function createRepositories(database) {
               userId,
               current.version,
             )
-            if (updated.changes !== 1) throw new VersionConflictError()
+            if (updated.changes !== 1) {
+              throw new StaleProgressError(buildPlayDto(userId, puzzleId))
+            }
           } else {
             const completed = completeProgressRecord.run(
               current.progress_id,
               userId,
               current.version,
             )
-            if (completed.changes !== 1) throw new VersionConflictError()
+            if (completed.changes !== 1) {
+              throw new StaleProgressError(buildPlayDto(userId, puzzleId))
+            }
           }
 
           return {
