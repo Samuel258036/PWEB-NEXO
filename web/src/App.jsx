@@ -306,6 +306,77 @@ export default function App() {
     await openDestination(nextTarget, csrfToken)
   }
 
+  async function handleAnswerSubmit(event) {
+    event.preventDefault()
+    if (!playState || playState.status !== 'in_progress' || !playState.currentStep) return
+
+    const rawAnswer = inputValue
+    const normalizedCommand = rawAnswer.trim().toLowerCase()
+
+    if (normalizedCommand === '/inicio') {
+      setInputValue('')
+      setErrorMessage('')
+      setStatusMessage('Partida preservada.')
+      setScreen('entry')
+      return
+    }
+
+    setErrorMessage('')
+    setStatusMessage('')
+
+    try {
+      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}/answer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+        },
+        body: JSON.stringify({
+          stepId: playState.currentStep.id,
+          expectedVersion: playState.version,
+          answer: rawAnswer,
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (res.status === 401) {
+        handleSessionExpired()
+        return
+      }
+
+      if (res.status === 409 && data?.error?.code === 'STALE_PROGRESS') {
+        if (data.play) {
+          setPlayState(data.play)
+        } else {
+          const refreshRes = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
+          if (refreshRes.ok) {
+            const refreshData = await refreshRes.json()
+            if (refreshData.play) setPlayState(refreshData.play)
+          }
+        }
+        setErrorMessage(data?.error?.message || 'O estado da partida mudou. Etapa atualizada.')
+        return
+      }
+
+      if (!res.ok) {
+        setErrorMessage(data?.error?.message || 'Não foi possível enviar a resposta.')
+        return
+      }
+
+      setInputValue('')
+      if (data.play) {
+        setPlayState(data.play)
+      }
+
+      if (data.correct === false) {
+        setErrorMessage('Resposta incorreta. Tente novamente.')
+      }
+    } catch {
+      setErrorMessage('Falha de comunicação ao enviar a resposta. Tente novamente.')
+    }
+  }
+
   if (screen === 'entry') {
     return (
       <main className="nexo-shell">
@@ -470,24 +541,64 @@ export default function App() {
   return (
     <main className="nexo-shell">
       <h1 className="nexo-prompt-heading">{playState?.puzzle?.name ?? 'Partida'}</h1>
-      {playState?.currentStep && (
-        <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
-          {playState.currentStep.prompt}
-        </p>
+
+      {playState?.status === 'in_progress' && playState?.currentStep && (
+        <form onSubmit={handleAnswerSubmit}>
+          <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+            {playState.currentStep.prompt}
+          </p>
+
+          <label htmlFor="play-answer" className="nexo-label">
+            Resposta
+          </label>
+          <div className="nexo-input-row">
+            <span className="nexo-prefix" aria-hidden="true">&gt;</span>
+            <input
+              ref={inputRef}
+              id="play-answer"
+              type="text"
+              className="nexo-input"
+              value={inputValue}
+              onChange={(event) => setInputValue(event.target.value)}
+              autoComplete="off"
+            />
+          </div>
+
+          <div className="nexo-actions">
+            <button type="submit" className="nexo-btn-primary">
+              Enviar
+            </button>
+            <button
+              type="button"
+              className="nexo-btn-secondary"
+              onClick={() => {
+                setInputValue('')
+                setErrorMessage('')
+                setStatusMessage('Partida preservada.')
+                setScreen('entry')
+              }}
+            >
+              Início
+            </button>
+          </div>
+        </form>
       )}
+
       {playState?.status === 'completed' && (
         <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
           {playState.finalMessage || 'Enigma concluído.'}
         </p>
       )}
+
+      {errorMessage && (
+        <p className="nexo-error" role="alert">{errorMessage}</p>
+      )}
+
+      {statusMessage && (
+        <p className="nexo-status" role="status">{statusMessage}</p>
+      )}
+
       <div className="nexo-actions">
-        <button
-          type="button"
-          className="nexo-btn-secondary"
-          onClick={() => setScreen('entry')}
-        >
-          Trocar destino
-        </button>
         <button
           type="button"
           className="nexo-btn-secondary"

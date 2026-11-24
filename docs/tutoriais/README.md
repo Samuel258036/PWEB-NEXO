@@ -26,3 +26,4 @@
 - [5.7 — Documentação da API de jogo e validação de contratos](define-puzzle-platform-mvp/5.7.md)
 - [6.1 — Layout textual responsivo e reducer de identificação](define-puzzle-platform-mvp/6.1.md)
 - [6.2 — Sessão real, entrada por nome, comando discreto e logout](define-puzzle-platform-mvp/6.2.md)
+- [6.3 — Etapa atual, campo de resposta e /inicio](define-puzzle-platform-mvp/6.3.md)
