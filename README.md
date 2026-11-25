@@ -60,3 +60,5 @@ O servidor também aplica migrações pendentes antes de aceitar requisições. 
 - `api/` contém a aplicação Express.
 
 Consulte os [tutoriais](docs/tutoriais/README.md) para reproduzir as entregas.
+
+Os contratos de autenticação, cookie e proxy estão na [referência da API de identidade](docs/api-identidade.md).

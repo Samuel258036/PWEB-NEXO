@@ -11,6 +11,7 @@
 - [3.2. Guardar sessões no SQLite](define-puzzle-platform-mvp/3.2.md)
 - [3.3. Identificar, cadastrar e entrar](define-puzzle-platform-mvp/3.3.md)
 - [3.4. Proteger as requisições](define-puzzle-platform-mvp/3.4.md)
+- [3.5. Conferir uma sessão pela API](define-puzzle-platform-mvp/3.5.md)
 - [4.1. Criar e retomar rascunhos](define-puzzle-platform-mvp/4.1.md)
 - [4.2. Salvar e ordenar um rascunho](define-puzzle-platform-mvp/4.2.md)
 - [4.3. Publicar um enigma](define-puzzle-platform-mvp/4.3.md)
