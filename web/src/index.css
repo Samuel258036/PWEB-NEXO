@@ -1,17 +1,17 @@
 :root {
-  --nexo-bg: #050805;
-  --nexo-surface: #0c140f;
+  --nexo-bg: #030503;
+  --nexo-surface: #081109;
   --nexo-text: #c7f5cf;
   --nexo-muted: #95b69d;
-  --nexo-accent: #45ff79;
+  --nexo-accent: #3dff55;
+  --nexo-frame: #22c540;
   --nexo-control-border: #60896b;
   --nexo-line: #28422f;
-  --nexo-focus: #e6ffe9;
+  --nexo-focus: #bbffc3;
   --nexo-warning: #f4c56a;
   --nexo-danger: #ff9b9b;
   --nexo-font: Consolas, "Liberation Mono", "Courier New", monospace;
   --nexo-radius: 4px;
-  --nexo-space-1: 4px;
   --nexo-space-2: 8px;
   --nexo-space-3: 12px;
   --nexo-space-4: 16px;
@@ -40,22 +40,50 @@ body {
   color: var(--nexo-text);
   font-size: 1rem;
   line-height: 1.6;
-  overflow-x: hidden;
+  background-image:
+    linear-gradient(90deg, rgb(61 255 85 / 0.04) 1px, transparent 1px),
+    linear-gradient(rgb(61 255 85 / 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: center top;
+}
+
+#root {
+  display: flow-root;
+  padding-block-end: var(--nexo-space-8);
 }
 
 .nexo-shell {
-  width: 100%;
-  max-width: 72ch;
-  min-width: 0;
-  margin-inline: auto;
-  padding: clamp(48px, 12vh, 112px) clamp(16px, 4vw, 32px) var(--nexo-space-8);
+  --nexo-panel-padding: clamp(20px, 4vw, var(--nexo-space-12));
+  position: relative;
+  width: min(calc(100% - 32px), 48rem);
+  margin: clamp(48px, 12svh, 112px) auto 0;
+  padding: var(--nexo-panel-padding);
+  border: 1px solid var(--nexo-frame);
+  border-radius: var(--nexo-radius);
+  background-color: var(--nexo-surface);
+  box-shadow: 0 0 24px rgb(61 255 85 / 0.13);
+}
+
+.nexo-shell::before {
+  content: '';
+  position: absolute;
+  inset-block-start: -1px;
+  inset-inline-start: var(--nexo-panel-padding);
+  width: 3rem;
+  height: 3px;
+  background-color: var(--nexo-accent);
+}
+
+.nexo-shell--prompt {
+  margin-block-start: clamp(64px, 31svh, 300px);
 }
 
 .nexo-prompt-heading {
-  margin: 0 0 var(--nexo-space-4);
-  font-size: clamp(1.25rem, 3vw, 1.5rem);
-  font-weight: 400;
-  line-height: 1.6;
+  display: block;
+  margin: 0 0 var(--nexo-space-6);
+  font-size: clamp(1.375rem, 3.8vw, 2rem);
+  font-weight: 700;
+  line-height: 1.3;
   color: var(--nexo-accent);
   overflow-wrap: anywhere;
 }
@@ -71,30 +99,46 @@ body {
 .nexo-input-row {
   display: flex;
   align-items: stretch;
-  gap: var(--nexo-space-2);
-  width: 100%;
   min-width: 0;
+  border: 1px solid var(--nexo-control-border);
+  border-radius: var(--nexo-radius);
+  background-color: var(--nexo-bg);
+}
+
+.nexo-input-row:focus-within {
+  border-color: var(--nexo-accent);
+}
+
+.nexo-input-row:has(.nexo-input:focus-visible) {
+  outline: 2px solid var(--nexo-focus);
+  outline-offset: 3px;
+}
+
+.nexo-input-row:has(.nexo-input:focus-visible) .nexo-input {
+  outline: none;
 }
 
 .nexo-prefix {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding-inline: var(--nexo-space-1);
+  display: grid;
+  place-items: center;
+  flex: 0 0 2.75rem;
+  border-inline-end: 1px solid var(--nexo-line);
   color: var(--nexo-accent);
-  font-size: 1rem;
+  font-size: 1.375rem;
+  font-weight: 700;
   user-select: none;
 }
 
 .nexo-input {
   width: 100%;
   min-width: 0;
-  min-height: 44px;
+  min-height: 50px;
   padding: var(--nexo-space-3);
-  border: 1px solid var(--nexo-control-border);
-  border-radius: var(--nexo-radius);
-  background-color: var(--nexo-surface);
+  border: 0;
+  border-radius: inherit;
+  background-color: transparent;
   color: var(--nexo-text);
+  caret-color: var(--nexo-accent);
   font-family: inherit;
   font-size: 1rem;
   line-height: 1.4;
@@ -107,6 +151,12 @@ body {
   margin-top: var(--nexo-space-4);
 }
 
+.nexo-navigation {
+  margin-top: var(--nexo-space-6);
+  padding-top: var(--nexo-space-4);
+  border-top: 1px solid var(--nexo-line);
+}
+
 .nexo-btn-primary,
 .nexo-btn-secondary {
   min-height: 44px;
@@ -116,6 +166,11 @@ body {
   font-size: 1rem;
   line-height: 1.4;
   cursor: pointer;
+}
+
+.nexo-btn-secondary:hover:not(:disabled) {
+  border-color: var(--nexo-accent);
+  color: var(--nexo-accent);
 }
 
 .nexo-btn-primary {
@@ -144,31 +199,50 @@ body {
   cursor: default;
 }
 
-.nexo-status {
-  margin-top: var(--nexo-space-3);
-  font-size: 1rem;
-  line-height: 1.6;
-  color: var(--nexo-muted);
+.nexo-copy,
+.nexo-status,
+.nexo-warning,
+.nexo-error {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.nexo-copy {
+  margin: 0 0 var(--nexo-space-6);
+  font-size: clamp(1rem, 2vw, 1.125rem);
+}
+
+.nexo-hints {
+  margin-block-end: var(--nexo-space-6);
+  padding-inline-start: var(--nexo-space-4);
+  border-inline-start: 2px solid var(--nexo-frame);
+}
+
+.nexo-hints .nexo-copy {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.nexo-hints .nexo-copy + .nexo-copy {
+  margin-top: var(--nexo-space-3);
+}
+
+.nexo-status,
+.nexo-warning,
+.nexo-error {
+  margin-top: var(--nexo-space-3);
+}
+
+.nexo-status {
+  color: var(--nexo-muted);
 }
 
 .nexo-warning {
-  margin-top: var(--nexo-space-3);
-  font-size: 1rem;
-  line-height: 1.6;
   color: var(--nexo-warning);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .nexo-error {
-  margin-top: var(--nexo-space-3);
-  font-size: 1rem;
-  line-height: 1.6;
   color: var(--nexo-danger);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 :focus-visible {
@@ -176,34 +250,19 @@ body {
   outline-offset: 3px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition: none !important;
-    animation: none !important;
+@media (forced-colors: active) {
+  body {
+    background-image: none;
   }
-}
-:root {
-  color-scheme: dark;
-  background: #050805;
-  color: #45ff79;
-  font-family: Consolas, 'Liberation Mono', 'Courier New', monospace;
-}
 
-body {
-  margin: 0;
-}
+  .nexo-shell,
+  .nexo-input-row,
+  .nexo-hints {
+    border-color: CanvasText;
+  }
 
-main {
-  max-width: 72ch;
-  margin-inline: auto;
-  padding: clamp(48px, 12vh, 112px) clamp(16px, 4vw, 32px) 32px;
-}
-
-h1 {
-  margin: 0;
-  font-size: clamp(1.25rem, 3vw, 1.5rem);
-  font-weight: 400;
-  line-height: 1.6;
+  :focus-visible,
+  .nexo-input-row:has(.nexo-input:focus-visible) {
+    outline-color: Highlight;
+  }
 }

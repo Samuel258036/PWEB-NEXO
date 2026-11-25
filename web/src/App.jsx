@@ -418,7 +418,7 @@ export default function App() {
 
   if (screen === 'entry') {
     return (
-      <main className="nexo-shell">
+      <main className="nexo-shell nexo-shell--prompt">
         <form onSubmit={handleEntrySubmit}>
           <label htmlFor="entry-intent" className="nexo-prompt-heading">
             {IDENTIFY_MESSAGES.entryPrompt}
@@ -451,7 +451,7 @@ export default function App() {
         )}
 
         {sessionUser && (
-          <div className="nexo-actions">
+          <div className="nexo-actions nexo-navigation">
             <button
               type="button"
               className="nexo-btn-secondary"
@@ -474,7 +474,7 @@ export default function App() {
         : IDENTIFY_MESSAGES.whoAreYou
 
     return (
-      <main className="nexo-shell">
+      <main className="nexo-shell nexo-shell--prompt">
         <form onSubmit={handleIdentifySubmit}>
           <label
             htmlFor={isPasswordPhase ? 'identify-password' : 'identify-input'}
@@ -555,7 +555,7 @@ export default function App() {
         {sessionUser && (
           <p className="nexo-status">Conta: {sessionUser.usernameDisplay}</p>
         )}
-        <div className="nexo-actions">
+        <div className="nexo-actions nexo-navigation">
           <button
             type="button"
             className="nexo-btn-secondary"
@@ -581,15 +581,15 @@ export default function App() {
 
       {playState?.status === 'in_progress' && playState?.currentStep && (
         <form onSubmit={handleAnswerSubmit}>
-          <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+          <p className="nexo-copy">
             {playState.currentStep.prompt}
           </p>
 
           <div aria-live="polite">
             {Array.isArray(playState.currentStep.revealedHints) && playState.currentStep.revealedHints.length > 0 && (
-              <div aria-label="Dicas reveladas">
+              <div className="nexo-hints" aria-label="Dicas reveladas">
                 {playState.currentStep.revealedHints.map((hint) => (
-                  <p key={hint.id} className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+                  <p key={hint.id} className="nexo-copy">
                     Dica {hint.position}: {hint.text}
                   </p>
                 ))}
@@ -640,7 +640,7 @@ export default function App() {
 
       {playState?.status === 'completed' && (
         <div>
-          <p className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+          <p className="nexo-copy">
             {resolveCompletionMessage(playState)}
           </p>
           <div className="nexo-actions">
@@ -668,7 +668,7 @@ export default function App() {
         <p className="nexo-status" role="status">{statusMessage}</p>
       )}
 
-      <div className="nexo-actions">
+      <div className="nexo-actions nexo-navigation">
         <button
           ref={startButtonRef}
           type="button"
