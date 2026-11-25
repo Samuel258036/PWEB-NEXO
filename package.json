@@ -15,6 +15,7 @@
     "dev:api": "npm run dev --workspace api",
     "start": "npm run start --workspace api",
     "migrate": "npm run migrate --workspace api",
+    "backup": "node api/src/backup.js",
     "test": "npm test --workspace api",
     "test:e2e": "npm run build && playwright test",
     "build": "npm run build --workspace web",

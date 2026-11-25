@@ -30,19 +30,37 @@ try {
     appOrigin: config.appOrigin,
   })
   const host = config.production ? undefined : '127.0.0.1'
-  const server = app.listen(config.port, host, () => {
+  const server = app.listen(config.port, host)
+  server.once('listening', () => {
     console.log(`Nexo disponível na porta ${config.port}`)
   })
   let resourcesClosed = false
+  let shutdownTimer
   const closeResources = () => {
     if (resourcesClosed) {
       return
     }
 
     resourcesClosed = true
+    clearTimeout(shutdownTimer)
+    process.off('SIGINT', shutdown)
+    process.off('SIGTERM', shutdown)
     app.locals.sessionStore.close()
     database.close()
   }
+  const shutdown = () => {
+    if (shutdownTimer) return
+
+    shutdownTimer = setTimeout(() => {
+      console.error('O prazo de 10 segundos para encerrar o Nexo expirou.')
+      server.closeAllConnections()
+      closeResources()
+      process.exit(1)
+    }, 10_000)
+    server.close()
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
   server.once('close', closeResources)
   server.on('error', (error) => {
     console.error(`Não foi possível iniciar o Nexo na porta ${config.port} (${error.code}).`)

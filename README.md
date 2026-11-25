@@ -56,6 +56,8 @@ Na raiz, execute `npm run migrate` para aplicar as migrações ao banco configur
 
 O servidor também aplica migrações pendentes antes de aceitar requisições. As migrações SQL ficam em `api/migrations/`. Execute `npm test` para verificar configuração, rotas e persistência em bancos temporários.
 
+Consulte o [guia de operação](docs/operacao.md) para backup online, restauração em cópia e reinício gracioso.
+
 - `web/` contém a interface React e a configuração Vite.
 - `api/` contém a aplicação Express.
 
