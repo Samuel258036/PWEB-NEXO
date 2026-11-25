@@ -168,11 +168,6 @@ body {
   cursor: pointer;
 }
 
-.nexo-btn-secondary:hover:not(:disabled) {
-  border-color: var(--nexo-accent);
-  color: var(--nexo-accent);
-}
-
 .nexo-btn-primary {
   border: 1px solid var(--nexo-accent);
   background-color: var(--nexo-accent);
@@ -189,6 +184,22 @@ body {
   border: 1px solid var(--nexo-control-border);
   background-color: var(--nexo-surface);
   color: var(--nexo-text);
+}
+
+.nexo-btn-secondary:hover:not(:disabled) {
+  border-color: var(--nexo-accent);
+  color: var(--nexo-accent);
+}
+
+.nexo-btn-danger {
+  border-color: var(--nexo-danger);
+  color: var(--nexo-danger);
+}
+
+.nexo-btn-danger:hover:not(:disabled) {
+  border-color: var(--nexo-danger);
+  background-color: var(--nexo-danger);
+  color: var(--nexo-bg);
 }
 
 .nexo-btn-primary:disabled,

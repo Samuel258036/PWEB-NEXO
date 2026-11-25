@@ -35,4 +35,5 @@
 - [7.2. proteger e salvar edições de autoria](define-puzzle-platform-mvp/7.2.md)
 - [7.3. publicar a versão salva do enigma](define-puzzle-platform-mvp/7.3.md)
 - [7.4. manter publicados com controle de versão](define-puzzle-platform-mvp/7.4.md)
+- [7.5. confirmar a exclusão de enigmas](define-puzzle-platform-mvp/7.5.md)
 - [PROC-07. Conferir o novo visual do terminal](PROC-07.md)

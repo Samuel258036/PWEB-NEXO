@@ -1,12 +1,13 @@
 import { useId } from 'react'
 
-export default function AuthorField({ label, value, onChange, multiline, readOnly, error, description }) {
+export default function AuthorField({ label, value, onChange, multiline, readOnly, error, description, autoFocus }) {
   const id = useId()
   const props = {
     id,
     className: 'nexo-input nexo-author-input',
     value,
     readOnly,
+    autoFocus,
     'aria-invalid': error ? true : undefined,
     'aria-describedby': error || description ? id + '-description' : undefined,
     onChange: (event) => onChange?.(event.target.value),

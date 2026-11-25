@@ -175,6 +175,24 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
     })
   }
 
+  function deletePuzzle() {
+    if (!editor.id || activeRequest.current) return
+    const name = editor.saved.name
+    const warning = 'Excluir “' + name + '”? Isso remove o enigma, suas etapas, dicas e todo o progresso dos jogadores. O nome fica disponível.'
+    if (!window.confirm(warning)) return
+
+    return run(async (options) => {
+      await authorRequest('/puzzles/' + editor.id, {
+        ...options,
+        method: 'DELETE',
+        body: { confirmed: true, expectedVersion: editor.version },
+      })
+      setEditor(null)
+      setPuzzles(null)
+      setFeedback({ error: false, message: 'Enigma excluído. O nome está disponível.' })
+    })
+  }
+
   return (
     <main ref={panelRef} className="nexo-shell">
       <h1 ref={headingRef} tabIndex={-1} className="nexo-prompt-heading">
@@ -190,8 +208,8 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
               setEditor(createEditor())
             }}>Criar um novo nexo</button>
           </div>
-          {puzzles === null && !feedback && <p role="status" className="nexo-status">Carregando enigmas…</p>}
-          {puzzles === null && feedback && (
+          {puzzles === null && !feedback?.error && <p role="status" className="nexo-status">Carregando enigmas…</p>}
+          {puzzles === null && feedback?.error && (
             <button type="button" className="nexo-btn-secondary" onClick={() => {
               setFeedback(null)
               setListRequest(listRequest + 1)
@@ -234,6 +252,11 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
       {editor?.id && (feedback?.conflict || editor.status === 'published') && (
         <div className="nexo-actions">
           <button type="button" className="nexo-btn-secondary" disabled={pending} onClick={reloadEditor}>Recarregar versão atual</button>
+        </div>
+      )}
+      {editor?.id && (
+        <div className="nexo-actions">
+          <button type="button" className="nexo-btn-secondary nexo-btn-danger" disabled={pending} onClick={deletePuzzle}>Excluir enigma</button>
         </div>
       )}
       <div className="nexo-actions nexo-navigation">

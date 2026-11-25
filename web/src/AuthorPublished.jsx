@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import AuthorField from './AuthorField.jsx'
 import { newDraftHint } from './author-editor.js'
 
 export default function AuthorPublished({ editor, pending, errors, onChange, onSave }) {
   const { form, saved } = editor
+  const [newFieldKey, setNewFieldKey] = useState(null)
   function changeStep(stepId, updates) {
     onChange({ steps: form.steps.map((step) => step.id === stepId ? { ...step, ...updates } : step) })
   }
@@ -43,7 +45,7 @@ export default function AuthorPublished({ editor, pending, errors, onChange, onS
                     label={'Dica ' + (hintIndex + 1)}
                     value={hint.text}
                     error={errors[stepPath + '.hints.' + hintIndex + '.text']}
-                    multiline
+                    multiline autoFocus={newFieldKey === hint.key}
                     onChange={(text) => changeStep(step.id, {
                       hints: step.hints.map((item) => item.key === hint.key ? { ...item, text } : item),
                     })}
@@ -62,7 +64,11 @@ export default function AuthorPublished({ editor, pending, errors, onChange, onS
             <div className="nexo-actions">
               <button type="button" className="nexo-btn-secondary"
                 disabled={step.hints.length >= 10 || step.hints.some((hint) => !hint.id)}
-                onClick={() => changeStep(step.id, { hints: [...step.hints, newDraftHint()] })}>Adicionar dica</button>
+                onClick={() => {
+                  const hint = newDraftHint()
+                  setNewFieldKey(hint.key)
+                  changeStep(step.id, { hints: [...step.hints, hint] })
+                }}>Adicionar dica</button>
             </div>
           </fieldset>
         )
