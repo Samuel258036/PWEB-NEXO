@@ -39,4 +39,5 @@
 - [8.1. Testar autoria e jogo em HTTPS](define-puzzle-platform-mvp/8.1.md)
 - [8.2. Conferir foco, contraste e dados do terminal](define-puzzle-platform-mvp/8.2.md)
 - [8.3. Testar o reinício e a restauração em cópia](define-puzzle-platform-mvp/8.3.md)
+- [8.4. Preparar uma sessão piloto](define-puzzle-platform-mvp/8.4.md)
 - [PROC-07. Conferir o novo visual do terminal](PROC-07.md)

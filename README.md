@@ -67,4 +67,6 @@ Consulte o [guia de operação](docs/operacao.md) para backup online, restauraç
 
 Consulte os [tutoriais](docs/tutoriais/README.md) para reproduzir as entregas.
 
+O [roteiro do piloto](docs/piloto.md) reúne as instruções e critérios para uma sessão com um grupo pequeno.
+
 Os contratos de autenticação, cookie e proxy estão na [referência da API de identidade](docs/api-identidade.md).
