@@ -153,9 +153,20 @@ test('publicação exige snapshot completo e congela a estrutura do rascunho', a
   const emptyPublish = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', { expectedVersion: 1 })
   assert.equal(emptyPublish.status, 400)
   assert.equal(emptyPublish.body.error.code, 'DRAFT_INCOMPLETE')
+  assert.ok(emptyPublish.body.error.fields.steps)
+
+  const incomplete = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
+    name: 'Publicável', version: 1, steps: [{ prompt: '\n \n\u00a0', answer: '  ' }],
+  })
+  const rejected = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', {
+    expectedVersion: incomplete.body.puzzle.version,
+  })
+  assert.equal(rejected.status, 400)
+  assert.ok(rejected.body.error.fields['steps.0.prompt'])
+  assert.ok(rejected.body.error.fields['steps.0.answer'])
 
   const snapshot = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/draft`, 'PUT', {
-    name: 'Publicável', version: 1, steps: [{ prompt: 'Enunciado', answer: 'resposta' }],
+    name: 'Publicável', version: incomplete.body.puzzle.version, steps: [{ prompt: 'Enunciado', answer: 'resposta' }],
   })
   const published = await authorRequest(origin, author, `/api/author/puzzles/${puzzleId}/publish`, 'POST', { expectedVersion: snapshot.body.puzzle.version })
   assert.equal(published.status, 200)

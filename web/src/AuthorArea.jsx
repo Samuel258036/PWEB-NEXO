@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { confirmAuthorDiscard, createEditor, draftPayload, newDraftHint, newDraftStep } from './author-editor.js'
+import { confirmAuthorDiscard, createEditor, draftPayload, hasAuthorChanges, newDraftHint, newDraftStep } from './author-editor.js'
 
 async function authorRequest(path, { csrfToken, method = 'GET', body, signal } = {}) {
   const options = { method, signal }
@@ -131,6 +131,7 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
   const isListing = !editor
   const editorId = editor?.id
   const accountId = account.id
+  const dirty = hasAuthorChanges(editor)
 
   const showRequestError = useCallback(async (error, signal) => {
     if (signal.aborted) return
@@ -233,6 +234,19 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
     })
   }
 
+  function publishDraft() {
+    if (!editor.id || dirty || activeRequest.current) return
+    if (!window.confirm('Publicar este enigma? O nome, a quantidade e a ordem das etapas ficam fixos.')) return
+
+    return run(async (options) => {
+      const { puzzle } = await authorRequest('/puzzles/' + editor.id + '/publish', {
+        ...options, method: 'POST', body: { expectedVersion: editor.version, confirmed: true },
+      })
+      setEditor(createEditor(puzzle))
+      setFeedback({ error: false, message: 'Enigma publicado. Já é possível jogá-lo pelo nome.' })
+    })
+  }
+
   return (
     <main ref={panelRef} className="nexo-shell">
       <h1 ref={headingRef} tabIndex={-1} className="nexo-prompt-heading">
@@ -273,9 +287,22 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
           )}
         </>
       ) : editor.status === 'draft' ? (
-        <DraftForm editor={editor} pending={pending} onChange={changeForm} onSave={saveDraft} errors={feedback?.fields ?? {}} />
+        <>
+          <DraftForm editor={editor} pending={pending} onChange={changeForm} onSave={saveDraft} errors={feedback?.fields ?? {}} />
+          <div className="nexo-actions">
+            <button type="button" className="nexo-btn-secondary" disabled={pending || !editor.id || dirty} onClick={publishDraft}>Publicar enigma</button>
+          </div>
+          {(!editor.id || dirty) && <p className="nexo-warning">Salve o rascunho antes de publicar.</p>}
+        </>
       ) : (
-        <p className="nexo-status">Publicado · {editor.form.steps.length} etapa(s).</p>
+        <>
+          <p className="nexo-status">Publicado</p>
+          <p className="nexo-warning">O nome, a quantidade e a ordem das etapas estão fixos.</p>
+          <h2 className="nexo-author-subheading">Etapas</h2>
+          <ol>
+            {editor.form.steps.map((step) => <li key={step.id} className="nexo-copy">{step.prompt}</li>)}
+          </ol>
+        </>
       )}
 
       {pending && <p role="status" className="nexo-status">Aguarde…</p>}

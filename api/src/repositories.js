@@ -142,7 +142,6 @@ export function createRepositories(database) {
   const deleteUnlistedDraftSteps = database.prepare(`DELETE FROM steps WHERE puzzle_id = ? AND id NOT IN (SELECT value FROM json_each(?))`)
   const updateDraftSnapshot = database.prepare(`UPDATE puzzles SET name_display = ?, name_key = ?, final_message = COALESCE(?, final_message), version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
   const updateDraftHint = database.prepare('UPDATE hints SET text = ?, position = ? WHERE id = ?')
-  const readDraftForPublish = database.prepare(`SELECT puzzles.id, puzzles.version, puzzles.status, puzzles.final_message, COUNT(steps.id) AS step_count, SUM(CASE WHEN trim(steps.prompt) = '' OR trim(steps.answer_text) = '' THEN 1 ELSE 0 END) AS incomplete_steps FROM puzzles LEFT JOIN steps ON steps.puzzle_id = puzzles.id WHERE puzzles.id = ? AND puzzles.author_id = ? GROUP BY puzzles.id`)
   const publishDraft = database.prepare(`UPDATE puzzles SET status = 'published', published_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
   const updateFinalMessage = database.prepare(`UPDATE puzzles SET final_message = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'published' AND version = ?`)
   const findStepForAuthor = database.prepare(`SELECT steps.id, steps.puzzle_id, steps.first_solved_at FROM steps JOIN puzzles ON puzzles.id = steps.puzzle_id WHERE steps.id = ? AND puzzles.author_id = ? AND puzzles.status = 'published'`)
@@ -436,8 +435,8 @@ export function createRepositories(database) {
         return runInImmediateTransaction(database, () => {
           const puzzle = findDraftForSave.get(puzzleId, authorId)
           if (!puzzle) throw new RepositoryReferenceError('salvar o rascunho')
-          if (puzzle.status !== 'draft') throw new RepositoryReferenceError('alterar um enigma publicado')
           if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          if (puzzle.status !== 'draft') throw new RepositoryReferenceError('alterar um enigma publicado')
 
           checkDraftName(nameKey, puzzleId)
           writeDraftSteps(puzzleId, steps)
@@ -448,13 +447,20 @@ export function createRepositories(database) {
       },
       publish({ puzzleId, authorId, expectedVersion }) {
         return runInImmediateTransaction(database, () => {
-          const puzzle = readDraftForPublish.get(puzzleId, authorId)
+          const puzzle = this.readForAuthor(puzzleId, authorId)
           if (!puzzle) throw new RepositoryReferenceError('publicar o enigma')
-          if (puzzle.status !== 'draft') throw new RepositoryReferenceError('publicar um rascunho')
           if (puzzle.version !== expectedVersion) throw new VersionConflictError()
-          if (puzzle.step_count < 1 || puzzle.incomplete_steps > 0) {
-            const error = new Error('Adicione ao menos uma etapa completa antes de publicar.')
+          if (puzzle.status !== 'draft') throw new RepositoryReferenceError('publicar um rascunho')
+          const fields = {}
+          if (puzzle.steps.length === 0) fields.steps = 'Adicione ao menos uma etapa.'
+          puzzle.steps.forEach((step, index) => {
+            if (!step.prompt.trim()) fields[`steps.${index}.prompt`] = 'Preencha o enunciado.'
+            if (!step.answer_text.trim()) fields[`steps.${index}.answer`] = 'Preencha a resposta.'
+          })
+          if (Object.keys(fields).length > 0) {
+            const error = new Error('Complete as etapas do rascunho antes de publicar.')
             error.code = 'DRAFT_INCOMPLETE'
+            error.fields = fields
             throw error
           }
           const result = publishDraft.run(puzzleId, authorId, expectedVersion)

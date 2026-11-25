@@ -33,4 +33,5 @@
 - [6.6. Retomar uma partida após falha de conexão](define-puzzle-platform-mvp/6.6.md)
 - [7.1. criar e retomar rascunhos de enigmas](define-puzzle-platform-mvp/7.1.md)
 - [7.2. proteger e salvar edições de autoria](define-puzzle-platform-mvp/7.2.md)
+- [7.3. publicar a versão salva do enigma](define-puzzle-platform-mvp/7.3.md)
 - [PROC-07. Conferir o novo visual do terminal](PROC-07.md)

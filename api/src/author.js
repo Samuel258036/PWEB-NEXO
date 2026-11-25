@@ -134,7 +134,7 @@ export function createAuthorRouter({ repositories }) {
       } else if (error instanceof VersionConflictError) {
         sendError(response, 409, error.code, error.message)
       } else if (error.code === 'DRAFT_INCOMPLETE') {
-        sendError(response, 400, error.code, error.message)
+        sendError(response, 400, error.code, error.message, error.fields)
       } else {
         throw error
       }
