@@ -750,16 +750,29 @@ test('exercita corrida HTTP entre acerto e edição da etapa em ambas as ordens 
   assert.equal(solvedB1.status, 200)
   assert.equal(solvedB1.body.correct, true)
 
+  const outdated = await apiRequest(origin, author, `/api/author/steps/${stepB1}/content`, 'PATCH', {
+    prompt: 'Tentativa antes da recarga',
+    answer: 'resposta nova',
+    expectedVersion: pubB.body.puzzle.version,
+  })
+  assert.equal(outdated.status, 409)
+  assert.equal(outdated.body.error.code, 'VERSION_CONFLICT')
+  const { body: latest } = await apiRequest(origin, author, `/api/author/puzzles/${puzzleB}`)
+  assert.equal(latest.puzzle.version, pubB.body.puzzle.version + 1)
+  assert.equal(latest.puzzle.steps[0].prompt, 'Enunciado inicial B')
+  assert.ok(latest.puzzle.steps[0].first_solved_at)
+  assert.equal(latest.puzzle.steps[1].first_solved_at, null)
+
   const [editResB1, editResB2] = await Promise.all([
     apiRequest(origin, author, `/api/author/steps/${stepB1}/content`, 'PATCH', {
       prompt: 'Enunciado concorrente 1',
       answer: 'tentativa-bloqueada-1',
-      expectedVersion: pubB.body.puzzle.version,
+      expectedVersion: latest.puzzle.version,
     }),
     apiRequest(origin, author, `/api/author/steps/${stepB1}/content`, 'PATCH', {
       prompt: 'Enunciado concorrente 2',
       answer: 'tentativa-bloqueada-2',
-      expectedVersion: pubB.body.puzzle.version,
+      expectedVersion: latest.puzzle.version,
     }),
   ])
 

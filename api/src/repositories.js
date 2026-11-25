@@ -1,5 +1,5 @@
 import { runInImmediateTransaction } from './transactions.js'
-import { ValidationError } from './validation.js'
+import { ValidationError, validateHintCount } from './validation.js'
 
 export class StaleProgressError extends Error {
   constructor(play = null) {
@@ -273,6 +273,9 @@ export function createRepositories(database) {
     SET first_solved_at = CURRENT_TIMESTAMP
     WHERE id = ? AND first_solved_at IS NULL
   `)
+  const incrementPuzzleVersionOnFirstSolve = database.prepare(`
+    UPDATE puzzles SET version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+  `)
   const recordStepSolveIgnoreDuplicate = database.prepare(`
     INSERT OR IGNORE INTO step_solves (progress_id, step_id)
     VALUES (?, ?)
@@ -497,6 +500,7 @@ export function createRepositories(database) {
           if (!step) throw new RepositoryReferenceError('adicionar a dica')
           const puzzle = findDraftForSave.get(step.puzzle_id, authorId)
           if (puzzle.version !== expectedVersion) throw new VersionConflictError()
+          validateHintCount(findHintsByStep.all(stepId).length + 1)
           insertHint.run(stepId, text, stepId)
           if (incrementOwnedPuzzleVersion.run(step.puzzle_id, authorId, expectedVersion).changes !== 1) throw new VersionConflictError()
           return listHintsForStep.all(stepId)
@@ -627,6 +631,7 @@ export function createRepositories(database) {
 
           if (step.first_solved_at === null) {
             markStepFirstSolved.run(step.id)
+            incrementPuzzleVersionOnFirstSolve.run(puzzleId)
           }
 
           recordStepSolveIgnoreDuplicate.run(current.progress_id, step.id)

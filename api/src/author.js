@@ -6,6 +6,17 @@ function sendError(response, status, code, message, fields) {
   response.status(status).json({ error: { code, message, fields } })
 }
 
+function sendValidationError(response, error) {
+  sendError(response, 400, error.code, error.message, { [error.field]: error.message })
+}
+
+function readExpectedVersion(value) {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new ValidationError('version', 'Informe a versão atual.')
+  }
+  return value
+}
+
 function atField(field, validate) {
   try {
     return validate()
@@ -145,12 +156,11 @@ export function createAuthorRouter({ repositories }) {
     const puzzleId = Number(request.params.id)
     try {
       const finalMessage = validateFinalMessage(request.body?.finalMessage)
-      const expectedVersion = request.body?.expectedVersion
-      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error('Informe a versão atual.')
+      const expectedVersion = readExpectedVersion(request.body?.expectedVersion)
       const puzzle = repositories.puzzles.updateFinalMessage({ puzzleId, authorId: request.session.userId, expectedVersion, finalMessage })
       response.json({ puzzle })
     } catch (error) {
-      if (error?.code === 'INVALID_FIELD' || !error.code) sendError(response, 400, 'INVALID_FIELD', error.message)
+      if (error instanceof ValidationError) sendValidationError(response, error)
       else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
       else throw error
     }
@@ -161,12 +171,11 @@ export function createAuthorRouter({ repositories }) {
     try {
       const prompt = validatePrompt(request.body?.prompt)
       const answer = validateAnswer(request.body?.answer, { allowEmpty: false })
-      const expectedVersion = request.body?.expectedVersion
-      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error('Informe a versão atual.')
+      const expectedVersion = readExpectedVersion(request.body?.expectedVersion)
       const puzzle = repositories.puzzles.updateStepContent({ stepId, authorId: request.session.userId, expectedVersion, prompt, answerText: answer.text, answerKey: answer.key })
       response.json({ puzzle })
     } catch (error) {
-      if (error?.code === 'INVALID_FIELD' || !error.code) sendError(response, 400, 'INVALID_FIELD', error.message)
+      if (error instanceof ValidationError) sendValidationError(response, error)
       else if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
       else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
       else throw error
@@ -176,12 +185,12 @@ export function createAuthorRouter({ repositories }) {
   router.post('/steps/:stepId/hints', (request, response) => {
     const stepId = Number(request.params.stepId)
     try {
-      const text = validateHint(request.body?.text)
-      const expectedVersion = request.body?.expectedVersion
-      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error('Informe a versão atual.')
-      response.status(201).json({ hints: repositories.puzzles.addHint({ stepId, authorId: request.session.userId, expectedVersion, text }) })
+      const text = atField('text', () => validateHint(request.body?.text))
+      const expectedVersion = readExpectedVersion(request.body?.expectedVersion)
+      const hints = repositories.puzzles.addHint({ stepId, authorId: request.session.userId, expectedVersion, text })
+      response.status(201).json({ hints, version: expectedVersion + 1 })
     } catch (error) {
-      if (error?.code === 'INVALID_FIELD' || !error.code) sendError(response, 400, 'INVALID_FIELD', error.message)
+      if (error instanceof ValidationError) sendValidationError(response, error)
       else if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
       else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
       else throw error
@@ -191,12 +200,12 @@ export function createAuthorRouter({ repositories }) {
   router.patch('/hints/:hintId', (request, response) => {
     const hintId = Number(request.params.hintId)
     try {
-      const text = validateHint(request.body?.text)
-      const expectedVersion = request.body?.expectedVersion
-      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error('Informe a versão atual.')
-      response.json({ hints: repositories.puzzles.editHint({ hintId, authorId: request.session.userId, expectedVersion, text }) })
+      const text = atField('text', () => validateHint(request.body?.text))
+      const expectedVersion = readExpectedVersion(request.body?.expectedVersion)
+      const hints = repositories.puzzles.editHint({ hintId, authorId: request.session.userId, expectedVersion, text })
+      response.json({ hints, version: expectedVersion + 1 })
     } catch (error) {
-      if (error?.code === 'INVALID_FIELD' || !error.code) sendError(response, 400, 'INVALID_FIELD', error.message)
+      if (error instanceof ValidationError) sendValidationError(response, error)
       else if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
       else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
       else throw error
@@ -206,10 +215,12 @@ export function createAuthorRouter({ repositories }) {
   router.delete('/hints/:hintId', (request, response) => {
     const hintId = Number(request.params.hintId)
     try {
-      const expectedVersion = Number(request.get('if-match'))
-      response.json({ hints: repositories.puzzles.removeHint({ hintId, authorId: request.session.userId, expectedVersion }) })
+      const expectedVersion = readExpectedVersion(Number(request.get('if-match')))
+      const hints = repositories.puzzles.removeHint({ hintId, authorId: request.session.userId, expectedVersion })
+      response.json({ hints, version: expectedVersion + 1 })
     } catch (error) {
-      if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
+      if (error instanceof ValidationError) sendValidationError(response, error)
+      else if (error instanceof RepositoryReferenceError) sendError(response, 404, error.code, error.message)
       else if (error instanceof VersionConflictError) sendError(response, 409, error.code, error.message)
       else throw error
     }

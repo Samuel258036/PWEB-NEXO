@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { confirmAuthorDiscard, createEditor, draftPayload, hasAuthorChanges, newDraftHint, newDraftStep } from './author-editor.js'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import DraftForm from './AuthorDraft.jsx'
+import AuthorPublished from './AuthorPublished.jsx'
+import { acceptPublishedResult, confirmAuthorDiscard, createEditor, draftPayload, hasAuthorChanges, publishedRequest } from './author-editor.js'
 
-async function authorRequest(path, { csrfToken, method = 'GET', body, signal } = {}) {
+async function authorRequest(path, { csrfToken, method = 'GET', body, headers, signal } = {}) {
   const options = { method, signal }
   if (method !== 'GET') {
-    options.headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }
+    options.headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken, ...headers }
     options.body = JSON.stringify(body)
   }
   const response = await fetch('/api/author' + path, options)
@@ -20,106 +22,6 @@ async function authorRequest(path, { csrfToken, method = 'GET', body, signal } =
   return data
 }
 
-function AuthorField({ label, value, onChange, multiline, readOnly, error, description }) {
-  const id = useId()
-  const props = {
-    id,
-    className: 'nexo-input nexo-author-input',
-    value,
-    readOnly,
-    'aria-invalid': error ? true : undefined,
-    'aria-describedby': error || description ? id + '-description' : undefined,
-    onChange: (event) => onChange?.(event.target.value),
-  }
-  return (
-    <div className="nexo-author-field">
-      <label className="nexo-label" htmlFor={id}>{label}</label>
-      {multiline ? <textarea {...props} rows={3} /> : <input {...props} type="text" />}
-      {(error || description) && (
-        <p id={id + '-description'} className={error ? 'nexo-error' : 'nexo-warning'}>{error || description}</p>
-      )}
-    </div>
-  )
-}
-
-function DraftForm({ editor, pending, onChange, onSave, errors }) {
-  const { form } = editor
-  const saveStep = (index, updates) => {
-    onChange({ steps: form.steps.map((step, position) => position === index ? { ...step, ...updates } : step) })
-  }
-  const moveStep = (index, offset) => {
-    const steps = [...form.steps]
-    const destination = index + offset
-    const moving = steps[index]
-    steps[index] = steps[destination]
-    steps[destination] = moving
-    onChange({ steps })
-  }
-
-  return (
-    <form onSubmit={onSave} noValidate>
-      <fieldset className="nexo-author-form" disabled={pending}>
-        <legend className="nexo-author-legend">Dados do rascunho</legend>
-        <AuthorField label="Nome do enigma" value={form.name} error={errors.name} onChange={(name) => onChange({ name })} />
-        <h2 className="nexo-author-subheading">Etapas</h2>
-        {errors.steps && <p className="nexo-error">{errors.steps}</p>}
-        {form.steps.map((step, index) => (
-          <fieldset className="nexo-author-section" key={step.key}>
-            <legend className="nexo-author-legend">Etapa {index + 1}</legend>
-            <AuthorField
-              label="Enunciado" value={step.prompt} error={errors[`steps.${index}.prompt`]}
-              onChange={(prompt) => saveStep(index, { prompt })} multiline
-            />
-            <AuthorField
-              label="Resposta correta" value={step.answer} error={errors[`steps.${index}.answer`]}
-              onChange={(answer) => saveStep(index, { answer })}
-            />
-            {errors[`steps.${index}.hints`] && <p className="nexo-error">{errors[`steps.${index}.hints`]}</p>}
-            {step.hints.map((hint, hintIndex) => (
-              <div className="nexo-author-hint" key={hint.key}>
-                <AuthorField
-                  label={'Dica ' + (hintIndex + 1)}
-                  value={hint.text}
-                  error={errors[`steps.${index}.hints.${hintIndex}.text`]}
-                  multiline
-                  onChange={(text) => saveStep(index, {
-                    hints: step.hints.map((item) => item.key === hint.key ? { ...item, text } : item),
-                  })}
-                />
-                <button type="button" className="nexo-btn-secondary" onClick={() => saveStep(index, {
-                  hints: step.hints.filter((item) => item.key !== hint.key),
-                })}>Remover dica {hintIndex + 1}</button>
-              </div>
-            ))}
-            <div className="nexo-actions">
-              <button type="button" className="nexo-btn-secondary" disabled={step.hints.length >= 10} onClick={() => saveStep(index, {
-                hints: [...step.hints, newDraftHint()],
-              })}>Adicionar dica</button>
-              <button type="button" className="nexo-btn-secondary" disabled={index === 0} onClick={() => moveStep(index, -1)}>Mover etapa para cima</button>
-              <button type="button" className="nexo-btn-secondary" disabled={index === form.steps.length - 1} onClick={() => moveStep(index, 1)}>Mover etapa para baixo</button>
-              <button type="button" className="nexo-btn-secondary" onClick={() => onChange({
-                steps: form.steps.filter((item) => item.key !== step.key),
-              })}>Remover etapa</button>
-            </div>
-          </fieldset>
-        ))}
-        <div className="nexo-actions">
-          <button type="button" className="nexo-btn-secondary" disabled={form.steps.length >= 50} onClick={() => onChange({
-            steps: [...form.steps, newDraftStep()],
-          })}>Adicionar etapa</button>
-        </div>
-        <AuthorField
-          label="Mensagem final (opcional)" value={form.finalMessage}
-          error={errors.finalMessage} onChange={(finalMessage) => onChange({ finalMessage })} multiline
-        />
-        <div className="nexo-actions">
-          <button type="submit" className="nexo-btn-primary">Salvar rascunho</button>
-        </div>
-      </fieldset>
-    </form>
-  )
-}
-
 export default function AuthorArea({ account, csrfToken, editor, setEditor, onEntry, onLogout, onIdentityRequired, onCsrfToken }) {
   const [puzzles, setPuzzles] = useState(null)
   const [pending, setPending] = useState(false)
@@ -130,6 +32,7 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
   const activeRequest = useRef(null)
   const isListing = !editor
   const editorId = editor?.id
+  const editorStatus = editor?.status
   const accountId = account.id
   const dirty = hasAuthorChanges(editor)
 
@@ -178,7 +81,7 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
 
   useEffect(() => {
     headingRef.current?.focus()
-  }, [isListing, editorId])
+  }, [isListing, editorId, editorStatus])
 
   useEffect(() => {
     if (!pending && feedback?.fields) panelRef.current?.querySelector('[aria-invalid="true"]')?.focus()
@@ -206,6 +109,10 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
       const { puzzle } = await authorRequest('/puzzles/' + id, options)
       setEditor(createEditor(puzzle))
     })
+  }
+
+  function reloadEditor() {
+    if (confirmAuthorDiscard(editor)) openPuzzle(editor.id)
   }
 
   function leaveEditor() {
@@ -244,6 +151,27 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
       })
       setEditor(createEditor(puzzle))
       setFeedback({ error: false, message: 'Enigma publicado. Já é possível jogá-lo pelo nome.' })
+    })
+  }
+
+  function savePublished(change) {
+    return run(async (options) => {
+      const { path, fields, ...request } = publishedRequest(editor, change)
+      try {
+        const data = await authorRequest(path, { ...options, ...request })
+        setEditor(acceptPublishedResult(editor, change, data))
+      } catch (error) {
+        if (fields && error.fields) {
+          error.fields = Object.fromEntries(Object.entries(error.fields).map(([field, message]) => [fields[field] || field, message]))
+        }
+        throw error
+      }
+      const messages = {
+        final: 'Mensagem final salva.',
+        step: 'Etapa salva.',
+        hint: change.remove ? 'Dica removida.' : 'Dica salva.',
+      }
+      setFeedback({ error: false, message: messages[change.kind] })
     })
   }
 
@@ -297,20 +225,16 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
       ) : (
         <>
           <p className="nexo-status">Publicado</p>
-          <p className="nexo-warning">O nome, a quantidade e a ordem das etapas estão fixos.</p>
-          <h2 className="nexo-author-subheading">Etapas</h2>
-          <ol>
-            {editor.form.steps.map((step) => <li key={step.id} className="nexo-copy">{step.prompt}</li>)}
-          </ol>
+          <AuthorPublished editor={editor} pending={pending} errors={feedback?.fields ?? {}} onChange={changeForm} onSave={savePublished} />
         </>
       )}
 
       {pending && <p role="status" className="nexo-status">Aguarde…</p>}
       {feedback && <p role={feedback.error ? 'alert' : 'status'} className={feedback.error ? 'nexo-error' : 'nexo-status'}>{feedback.message}</p>}
-      {feedback?.conflict && editor?.id && (
-        <button type="button" className="nexo-btn-secondary" disabled={pending} onClick={() => {
-          if (confirmAuthorDiscard(editor)) openPuzzle(editor.id)
-        }}>Recarregar versão atual</button>
+      {editor?.id && (feedback?.conflict || editor.status === 'published') && (
+        <div className="nexo-actions">
+          <button type="button" className="nexo-btn-secondary" disabled={pending} onClick={reloadEditor}>Recarregar versão atual</button>
+        </div>
       )}
       <div className="nexo-actions nexo-navigation">
         {editor ? (

@@ -67,7 +67,7 @@ Exige pelo menos uma etapa com enunciado e resposta. Dicas e mensagem final são
 { "prompt": "Novo enunciado", "answer": "resposta", "expectedVersion": 4 }
 ```
 
-O enunciado continua editável após solução. A resposta só muda antes do primeiro acerto; depois disso, o texto enviado para `answer` é ignorado e a resposta vigente é preservada. Cada atualização incrementa a versão do enigma.
+O enunciado continua editável após solução. O primeiro acerto bloqueia a resposta da etapa e incrementa a versão do enigma. Uma edição com a versão anterior recebe `409 VERSION_CONFLICT`. Após recarregar, a edição com a versão vigente conserva a resposta bloqueada e permite salvar o enunciado.
 
 ### `PATCH /puzzles/:id/final-message`
 
@@ -84,6 +84,8 @@ A mensagem final aceita texto vazio, para usar a mensagem padrão, ou texto de a
 - `DELETE /hints/:hintId`: envia a versão atual no cabeçalho `If-Match`; remove a dica e compacta as posições seguintes.
 
 Não há endpoint para reordenar dicas. Conflito de versão retorna `409 VERSION_CONFLICT`; dica/etapa alheia retorna `404 INVALID_REFERENCE`.
+
+As mutações de dicas retornam `hints` e a nova `version` do enigma. O editor usa essa versão na próxima mutação.
 
 ### `DELETE /puzzles/:id`
 

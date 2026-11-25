@@ -116,9 +116,11 @@ test('conclui no último acerto, retorna a concluído ao reabrir e reflete mensa
   assert.equal(reopenedCompleted.body.play.status, 'completed')
 
   // Autor atualiza a mensagem final e nova consulta exibe a mensagem vigente
+  const latest = await reqJson(origin, author, `/api/author/puzzles/${puzzleId}`)
+  assert.equal(latest.status, 200)
   const updatedMsg = await reqJson(origin, author, `/api/author/puzzles/${puzzleId}/final-message`, 'PATCH', {
     finalMessage: 'Mensagem final atualizada pela autora.',
-    expectedVersion: pub.body.puzzle.version,
+    expectedVersion: latest.body.puzzle.version,
   })
   assert.equal(updatedMsg.status, 200)
 
