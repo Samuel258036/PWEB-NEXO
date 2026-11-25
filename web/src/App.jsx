@@ -6,6 +6,8 @@ import {
   resolveDestinationFromIntent,
 } from './identification.js'
 
+const PUZZLE_UNAVAILABLE = 'Não encontramos esse nexo.'
+
 export default function App() {
   const [screen, setScreen] = useState('entry') // 'entry' | 'identify' | 'play' | 'author'
   const [entryValue, setEntryValue] = useState('')
@@ -16,6 +18,7 @@ export default function App() {
   const [playState, setPlayState] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
+  const [playPendingMessage, setPlayPendingMessage] = useState('')
 
   const [authState, dispatchAuth] = useReducer(
     identificationReducer,
@@ -25,60 +28,118 @@ export default function App() {
 
   const inputRef = useRef(null)
   const passwordRef = useRef(null)
+  const startButtonRef = useRef(null)
+  const playRequestRef = useRef(null)
+
+  const cancelPlayRequest = useCallback(() => {
+    playRequestRef.current?.abort()
+    playRequestRef.current = null
+    setPlayPendingMessage('')
+  }, [])
 
   const handleSessionExpired = useCallback((message = 'Sua sessão expirou ou foi encerrada. Identifique-se novamente.') => {
+    cancelPlayRequest()
     setSessionUser(null)
     setPlayState(null)
     setInputValue('')
     setPasswordValue('')
     dispatchAuth({ type: 'RESET_TO_USERNAME', notice: message })
     setScreen('identify')
-  }, [])
+  }, [cancelPlayRequest])
 
-  const openDestination = useCallback(async (target, activeCsrfToken) => {
+  async function requestPlay({ path, payload, token = csrfToken, pendingMessage, failureMessage }) {
+    if (playRequestRef.current) return
+
+    const controller = new AbortController()
+    const { signal } = controller
+    playRequestRef.current = controller
+    setPlayPendingMessage(pendingMessage)
     setErrorMessage('')
     setStatusMessage('')
 
-    if (!target) {
-      setScreen('entry')
-      return
-    }
-
-    if (target.kind === 'author') {
-      setScreen('author')
-      return
-    }
-
     try {
-      const res = await fetch('/api/play/puzzles/open', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(activeCsrfToken ? { 'X-CSRF-Token': activeCsrfToken } : {}),
-        },
-        body: JSON.stringify({ name: target.name }),
-      })
-      const data = await res.json().catch(() => ({}))
+      const options = { signal }
+      if (payload) {
+        options.method = 'POST'
+        options.headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': token }
+        options.body = JSON.stringify(payload)
+      }
+      const res = await fetch(`/api/play/puzzles${path}`, options)
+      const data = await res.json()
+      if (signal.aborted) return
 
       if (res.status === 401) {
         handleSessionExpired()
         return
       }
 
-      if (!res.ok) {
+      const errorCode = data.error?.code
+      if (errorCode === 'CSRF_INVALID') {
+        const sessionResponse = await fetch('/api/auth/session', { signal })
+        if (sessionResponse.ok) {
+          const session = await sessionResponse.json()
+          if (signal.aborted) return
+          setCsrfToken(session.csrfToken)
+          if (!session.user || session.user.id !== sessionUser?.id) {
+            handleSessionExpired()
+            return
+          }
+          setErrorMessage('A sessão foi atualizada. Tente novamente.')
+          return
+        }
+      }
+
+      if (errorCode === 'PUZZLE_UNAVAILABLE') {
         setPlayState(null)
-        setErrorMessage(data?.error?.message || 'Não foi possível abrir esse destino.')
-        setScreen('entry')
+        setInputValue('')
+        setErrorMessage(PUZZLE_UNAVAILABLE)
         return
       }
 
+      const staleProgress = errorCode === 'STALE_PROGRESS'
+      if (!res.ok && !staleProgress) {
+        setErrorMessage(data.error?.message || failureMessage)
+        return
+      }
+
+      if (!data.play) throw new Error('Resposta da partida incompleta.')
+      if (data.play.currentStep?.id !== playState?.currentStep?.id || data.correct !== undefined) {
+        setInputValue('')
+      }
       setPlayState(data.play)
-      setScreen('play')
+      if (path === '/open') {
+        setEntryValue('')
+        setScreen('play')
+      }
+      if (staleProgress) setStatusMessage('A partida foi atualizada.')
+      if (data.correct === false) setErrorMessage('Resposta incorreta. Tente novamente.')
     } catch {
-      setErrorMessage('Falha de comunicação ao abrir o destino. Tente novamente.')
-      setScreen('entry')
+      if (!signal.aborted) setErrorMessage(failureMessage)
+    } finally {
+      if (playRequestRef.current === controller) {
+        playRequestRef.current = null
+        setPlayPendingMessage('')
+      }
     }
-  }, [handleSessionExpired])
+  }
+
+  async function openDestination(target, token) {
+    if (target.kind === 'author') {
+      setEntryValue('')
+      setScreen('author')
+      return
+    }
+
+    setEntryValue(target.name)
+    setScreen('entry')
+    await requestPlay({
+      path: '/open',
+      payload: { name: target.name },
+      token,
+      pendingMessage: 'Abrindo partida…',
+      failureMessage: 'Falha de comunicação ao abrir a partida. Tente novamente.',
+    })
+  }
 
   const syncSession = useCallback(async () => {
     try {
@@ -130,16 +191,23 @@ export default function App() {
     }
   }, [syncSession])
 
+  const currentStepId = playState?.currentStep?.id
+  const playStatus = playState?.status
   useEffect(() => {
     if (screen === 'identify' && authState.phase === 'password') {
       passwordRef.current?.focus()
       return
     }
+    if (screen === 'play' && playStatus !== 'in_progress') {
+      startButtonRef.current?.focus()
+      return
+    }
     inputRef.current?.focus()
-  }, [screen, authState.phase, playState?.currentStep?.id])
+  }, [screen, authState.phase, currentStepId, playStatus])
 
   async function handleEntrySubmit(event) {
     event.preventDefault()
+    if (playRequestRef.current) return
     const trimmed = entryValue.trim()
     if (!trimmed) return
 
@@ -147,9 +215,8 @@ export default function App() {
     dispatchAuth({ type: 'SET_INTENDED_TARGET', target })
     setErrorMessage('')
     setStatusMessage('')
-    setEntryValue('')
-
     if (!sessionUser) {
+      setEntryValue('')
       setInputValue('')
       setPasswordValue('')
       dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
@@ -161,60 +228,14 @@ export default function App() {
   }
 
   async function handleRevealHint() {
-    if (!playState || playState.status !== 'in_progress' || !playState.currentStep) return
+    if (!playState?.currentStep) return
 
-    setErrorMessage('')
-    setStatusMessage('')
-
-    try {
-      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}/hints/reveal`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-        },
-        body: JSON.stringify({
-          stepId: playState.currentStep.id,
-          expectedVersion: playState.version,
-        }),
-      })
-
-      const data = await res.json().catch(() => ({}))
-
-      if (res.status === 401) {
-        handleSessionExpired()
-        return
-      }
-
-      if (res.status === 409 && data?.error?.code === 'STALE_PROGRESS') {
-        if (data.play) {
-          setPlayState(data.play)
-        } else {
-          const refreshRes = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
-          if (refreshRes.ok) {
-            const refreshData = await refreshRes.json()
-            if (refreshData.play) setPlayState(refreshData.play)
-          }
-        }
-        setErrorMessage(data?.error?.message || 'O estado da partida mudou. Etapa atualizada.')
-        return
-      }
-
-      if (!res.ok) {
-        setErrorMessage(data?.error?.message || 'Não foi possível revelar a dica.')
-        return
-      }
-
-      if (data.play) {
-        setPlayState(data.play)
-      }
-
-      if (data.exhausted || data.play?.currentStep?.hasMoreHints === false) {
-        setStatusMessage('Não há mais dicas disponíveis para esta etapa.')
-      }
-    } catch {
-      setErrorMessage('Falha de comunicação ao solicitar a dica. Tente novamente.')
-    }
+    await requestPlay({
+      path: `/${playState.puzzle.id}/hints/reveal`,
+      payload: { stepId: playState.currentStep.id, expectedVersion: playState.version },
+      pendingMessage: 'Solicitando dica…',
+      failureMessage: 'Falha de comunicação ao solicitar a dica. Tente novamente.',
+    })
   }
 
   async function handleIdentifySubmit(event) {
@@ -319,6 +340,7 @@ export default function App() {
   }
 
   async function handleLogout() {
+    cancelPlayRequest()
     setErrorMessage('')
     try {
       const res = await fetch('/api/auth/logout', {
@@ -337,8 +359,16 @@ export default function App() {
     }
 
     setSessionUser(null)
+    returnToEntry('Sessão encerrada.')
+  }
+
+  function returnToEntry(message) {
+    cancelPlayRequest()
     setPlayState(null)
-    setStatusMessage('Sessão encerrada.')
+    setEntryValue('')
+    setInputValue('')
+    setErrorMessage('')
+    setStatusMessage(message)
     setScreen('entry')
   }
 
@@ -350,15 +380,11 @@ export default function App() {
     const normalizedCommand = rawAnswer.trim().toLowerCase()
 
     if (normalizedCommand === '/inicio') {
-      setInputValue('')
-      setErrorMessage('')
-      setStatusMessage('Partida preservada.')
-      setScreen('entry')
+      returnToEntry('Partida preservada.')
       return
     }
 
-    setErrorMessage('')
-    setStatusMessage('')
+    if (playRequestRef.current) return
 
     if (normalizedCommand === '/dica') {
       setInputValue('')
@@ -366,57 +392,12 @@ export default function App() {
       return
     }
 
-    try {
-      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}/answer`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-        },
-        body: JSON.stringify({
-          stepId: playState.currentStep.id,
-          expectedVersion: playState.version,
-          answer: rawAnswer,
-        }),
-      })
-
-      const data = await res.json().catch(() => ({}))
-
-      if (res.status === 401) {
-        handleSessionExpired()
-        return
-      }
-
-      if (res.status === 409 && data?.error?.code === 'STALE_PROGRESS') {
-        if (data.play) {
-          setPlayState(data.play)
-        } else {
-          const refreshRes = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
-          if (refreshRes.ok) {
-            const refreshData = await refreshRes.json()
-            if (refreshData.play) setPlayState(refreshData.play)
-          }
-        }
-        setErrorMessage(data?.error?.message || 'O estado da partida mudou. Etapa atualizada.')
-        return
-      }
-
-      if (!res.ok) {
-        setErrorMessage(data?.error?.message || 'Não foi possível enviar a resposta.')
-        return
-      }
-
-      setInputValue('')
-      if (data.play) {
-        setPlayState(data.play)
-      }
-
-      if (data.correct === false) {
-        setErrorMessage('Resposta incorreta. Tente novamente.')
-      }
-    } catch {
-      setErrorMessage('Falha de comunicação ao enviar a resposta. Tente novamente.')
-    }
+    await requestPlay({
+      path: `/${playState.puzzle.id}/answer`,
+      payload: { stepId: playState.currentStep.id, expectedVersion: playState.version, answer: rawAnswer },
+      pendingMessage: 'Enviando resposta…',
+      failureMessage: 'Falha de comunicação ao enviar a resposta. Tente novamente.',
+    })
   }
 
   const DEFAULT_COMPLETION_MESSAGE = 'Enigma concluído.'
@@ -428,30 +409,11 @@ export default function App() {
   }
 
   async function handleRefreshCompletedPlay() {
-    if (!playState?.puzzle?.id) return
-    setErrorMessage('')
-    setStatusMessage('')
-
-    try {
-      const res = await fetch(`/api/play/puzzles/${playState.puzzle.id}`)
-      const data = await res.json().catch(() => ({}))
-
-      if (res.status === 401) {
-        handleSessionExpired()
-        return
-      }
-
-      if (!res.ok) {
-        setErrorMessage(data?.error?.message || 'Não foi possível atualizar a conclusão.')
-        return
-      }
-
-      if (data.play) {
-        setPlayState(data.play)
-      }
-    } catch {
-      setErrorMessage('Falha de comunicação ao atualizar a conclusão.')
-    }
+    await requestPlay({
+      path: `/${playState.puzzle.id}`,
+      pendingMessage: 'Atualizando mensagem…',
+      failureMessage: 'Falha de comunicação ao atualizar a conclusão. Tente novamente.',
+    })
   }
 
   if (screen === 'entry') {
@@ -471,9 +433,14 @@ export default function App() {
               value={entryValue}
               onChange={(event) => setEntryValue(event.target.value)}
               autoComplete="off"
+              readOnly={Boolean(playPendingMessage)}
             />
           </div>
         </form>
+
+        {playPendingMessage && (
+          <p className="nexo-status" role="status">{playPendingMessage}</p>
+        )}
 
         {errorMessage && (
           <p className="nexo-error" role="alert">{errorMessage}</p>
@@ -618,21 +585,23 @@ export default function App() {
             {playState.currentStep.prompt}
           </p>
 
-          {Array.isArray(playState.currentStep.revealedHints) && playState.currentStep.revealedHints.length > 0 && (
-            <div aria-label="Dicas reveladas">
-              {playState.currentStep.revealedHints.map((hint) => (
-                <p key={hint.id} className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
-                  Dica {hint.position}: {hint.text}
-                </p>
-              ))}
-            </div>
-          )}
+          <div aria-live="polite">
+            {Array.isArray(playState.currentStep.revealedHints) && playState.currentStep.revealedHints.length > 0 && (
+              <div aria-label="Dicas reveladas">
+                {playState.currentStep.revealedHints.map((hint) => (
+                  <p key={hint.id} className="nexo-status" style={{ whiteSpace: 'pre-wrap' }}>
+                    Dica {hint.position}: {hint.text}
+                  </p>
+                ))}
+              </div>
+            )}
 
-          {playState.currentStep.hasMoreHints === false && (
-            <p className="nexo-warning">
-              Não há mais dicas disponíveis para esta etapa.
-            </p>
-          )}
+            {playState.currentStep.hasMoreHints === false && (
+              <p className="nexo-warning">
+                Não há mais dicas disponíveis para esta etapa.
+              </p>
+            )}
+          </div>
 
           <label htmlFor="play-answer" className="nexo-label">
             Resposta
@@ -647,11 +616,12 @@ export default function App() {
               value={inputValue}
               onChange={(event) => setInputValue(event.target.value)}
               autoComplete="off"
+              readOnly={Boolean(playPendingMessage)}
             />
           </div>
 
           <div className="nexo-actions">
-            <button type="submit" className="nexo-btn-primary">
+            <button type="submit" className="nexo-btn-primary" disabled={Boolean(playPendingMessage)}>
               Enviar
             </button>
             {playState.currentStep.hasMoreHints !== false && (
@@ -659,22 +629,11 @@ export default function App() {
                 type="button"
                 className="nexo-btn-secondary"
                 onClick={handleRevealHint}
+                disabled={Boolean(playPendingMessage)}
               >
                 Pedir dica
               </button>
             )}
-            <button
-              type="button"
-              className="nexo-btn-secondary"
-              onClick={() => {
-                setInputValue('')
-                setErrorMessage('')
-                setStatusMessage('Partida preservada.')
-                setScreen('entry')
-              }}
-            >
-              Início
-            </button>
           </div>
         </form>
       )}
@@ -689,23 +648,16 @@ export default function App() {
               type="button"
               className="nexo-btn-secondary"
               onClick={handleRefreshCompletedPlay}
+              disabled={Boolean(playPendingMessage)}
             >
               Atualizar mensagem
             </button>
-            <button
-              type="button"
-              className="nexo-btn-secondary"
-              onClick={() => {
-                setInputValue('')
-                setErrorMessage('')
-                setStatusMessage('')
-                setScreen('entry')
-              }}
-            >
-              Início
-            </button>
           </div>
         </div>
+      )}
+
+      {playPendingMessage && (
+        <p className="nexo-status" role="status">{playPendingMessage}</p>
       )}
 
       {errorMessage && (
@@ -717,6 +669,14 @@ export default function App() {
       )}
 
       <div className="nexo-actions">
+        <button
+          ref={startButtonRef}
+          type="button"
+          className="nexo-btn-secondary"
+          onClick={() => returnToEntry(currentStepId ? 'Partida preservada.' : '')}
+        >
+          Início
+        </button>
         <button
           type="button"
           className="nexo-btn-secondary"

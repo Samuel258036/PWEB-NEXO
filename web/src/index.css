@@ -125,7 +125,7 @@ body {
   font-weight: 700;
 }
 
-.nexo-btn-primary:hover {
+.nexo-btn-primary:hover:not(:disabled) {
   background-color: var(--nexo-surface);
   color: var(--nexo-accent);
 }
@@ -134,6 +134,14 @@ body {
   border: 1px solid var(--nexo-control-border);
   background-color: var(--nexo-surface);
   color: var(--nexo-text);
+}
+
+.nexo-btn-primary:disabled,
+.nexo-btn-secondary:disabled {
+  border-color: var(--nexo-control-border);
+  background-color: var(--nexo-surface);
+  color: var(--nexo-muted);
+  cursor: default;
 }
 
 .nexo-status {
