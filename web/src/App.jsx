@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import AuthorArea from './AuthorArea.jsx'
-import { confirmAuthorDiscard, hasAuthorChanges } from './author-editor.js'
+import { confirmAuthorDiscard, createEditor, hasAuthorChanges } from './author-editor.js'
 import {
   IDENTIFY_MESSAGES,
+  LOGOUT_FAILED,
   createInitialIdentificationState,
   identificationReducer,
   resolveDestinationFromIntent,
+  resolveDirectAuthorTarget,
 } from './identification.js'
 
 const PUZZLE_UNAVAILABLE = 'Não encontramos esse nexo.'
 
 export default function App() {
-  const [screen, setScreen] = useState('entry') // 'entry' | 'identify' | 'play' | 'author'
+  const [directAuthorTarget] = useState(() => resolveDirectAuthorTarget(window.location.pathname))
+  const [screen, setScreen] = useState(directAuthorTarget ? 'author-loading' : 'entry')
   const [entryValue, setEntryValue] = useState('')
   const [inputValue, setInputValue] = useState('')
   const [passwordValue, setPasswordValue] = useState('')
@@ -25,8 +28,8 @@ export default function App() {
 
   const [authState, dispatchAuth] = useReducer(
     identificationReducer,
-    undefined,
-    () => createInitialIdentificationState(null),
+    directAuthorTarget,
+    createInitialIdentificationState,
   )
 
   const inputRef = useRef(null)
@@ -126,10 +129,19 @@ export default function App() {
     }
   }
 
-  async function openDestination(target, token) {
+  const openAuthor = useCallback((target, account) => {
+    if (target.newDraft && account) {
+      setAuthorWork((current) => current?.accountId === account.id
+        ? current
+        : { accountId: account.id, editor: createEditor() })
+    }
+    setEntryValue('')
+    setScreen('author')
+  }, [])
+
+  async function openDestination(target, token, account = sessionUser) {
     if (target.kind === 'author') {
-      setEntryValue('')
-      setScreen('author')
+      openAuthor(target, account)
       return
     }
 
@@ -146,11 +158,21 @@ export default function App() {
 
   const reidentifyAuthor = useCallback((token) => {
     if (token) setCsrfToken(token)
-    dispatchAuth({ type: 'SET_INTENDED_TARGET', target: { kind: 'author' } })
     handleSessionExpired()
   }, [handleSessionExpired])
 
   const sessionAccountId = sessionUser?.id
+  const setAuthorEditor = useCallback((editor) => {
+    setAuthorWork(editor ? { accountId: sessionAccountId, editor } : null)
+    const currentPath = window.location.pathname
+    if (!resolveDirectAuthorTarget(currentPath)) return
+    const path = editor?.id ? '/nexo/' + editor.id : editor ? '/nexo/novo' : '/nexo'
+    if (path !== currentPath) {
+      window.history.replaceState(window.history.state, '', path)
+      dispatchAuth({ type: 'SET_INTENDED_TARGET', target: resolveDirectAuthorTarget(path) })
+    }
+  }, [sessionAccountId])
+
   useEffect(() => {
     let request
     async function syncSession() {
@@ -159,17 +181,26 @@ export default function App() {
       const { signal } = request
       try {
         const res = await fetch('/api/auth/session', { signal })
-        if (!res.ok) return
+        if (!res.ok) {
+          if (screen === 'author-loading') setErrorMessage('Não foi possível verificar a sessão.')
+          return
+        }
         const data = await res.json()
         if (signal.aborted) return
         if (data.csrfToken) setCsrfToken(data.csrfToken)
+        if (screen === 'author-loading') {
+          setSessionUser(data.user ?? null)
+          if (data.user) openAuthor(directAuthorTarget, data.user)
+          else setScreen('identify')
+          return
+        }
         if ((screen === 'play' || screen === 'author') && data.user?.id !== sessionAccountId) {
           handleSessionExpired()
           return
         }
         setSessionUser(data.user ?? null)
       } catch {
-        // A próxima consulta de sessão pode recuperar uma falha transitória.
+        if (screen === 'author-loading' && !signal.aborted) setErrorMessage('Não foi possível verificar a sessão.')
       }
     }
 
@@ -188,7 +219,7 @@ export default function App() {
       window.removeEventListener('focus', onFocusOrVisibility)
       document.removeEventListener('visibilitychange', onFocusOrVisibility)
     }
-  }, [handleSessionExpired, screen, sessionAccountId])
+  }, [directAuthorTarget, handleSessionExpired, openAuthor, screen, sessionAccountId])
 
   const authorHasChanges = hasAuthorChanges(authorWork?.editor)
   useEffect(() => {
@@ -342,7 +373,7 @@ export default function App() {
         }
 
         if (authState.intendedTarget) {
-          await openDestination(authState.intendedTarget, nextCsrf)
+          await openDestination(authState.intendedTarget, nextCsrf, data.user)
         } else {
           setScreen('entry')
         }
@@ -358,28 +389,33 @@ export default function App() {
   async function handleLogout() {
     cancelPlayRequest()
     setErrorMessage('')
-    try {
-      const res = await fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
-        },
-      })
-      const data = await res.json().catch(() => ({}))
-      if (data?.csrfToken) {
-        setCsrfToken(data.csrfToken)
+    const response = await fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+      },
+    }).catch(() => null)
+    if (!response?.ok) {
+      const check = await fetch('/api/auth/session').catch(() => null)
+      const session = check?.ok ? await check.json().catch(() => null) : null
+      if (session?.csrfToken) setCsrfToken(session.csrfToken)
+      if (session?.user !== null) {
+        if (screen !== 'author') setErrorMessage(LOGOUT_FAILED)
+        return false
       }
-    } catch {
-      // mesmo em falha de rede, limpa sessão local e exige nova identificação
     }
 
     setSessionUser(null)
     returnToEntry('Sessão encerrada.')
+    return true
   }
 
   function returnToEntry(message) {
     cancelPlayRequest()
+    if (resolveDirectAuthorTarget(window.location.pathname)) {
+      window.history.replaceState(window.history.state, '', '/')
+    }
     setPlayState(null)
     setAuthorWork(null)
     setEntryValue('')
@@ -433,6 +469,19 @@ export default function App() {
       pendingMessage: 'Atualizando mensagem…',
       failureMessage: 'Falha de comunicação ao atualizar a conclusão. Tente novamente.',
     })
+  }
+
+  if (screen === 'author-loading') {
+    return (
+      <main className="nexo-shell nexo-shell--prompt">
+        {errorMessage ? (
+          <>
+            <p className="nexo-error" role="alert">{errorMessage}</p>
+            <button type="button" className="nexo-btn-secondary" onClick={() => window.location.reload()}>Tentar novamente</button>
+          </>
+        ) : <p className="nexo-status" role="status">Verificando sessão…</p>}
+      </main>
+    )
   }
 
   if (screen === 'entry') {
@@ -559,11 +608,9 @@ export default function App() {
               disabled={isSubmittingIdentity}
               onClick={() => {
                 if (!confirmAuthorDiscard(authorWork?.editor)) return
-                setAuthorWork(null)
-                setInputValue('')
                 setPasswordValue('')
                 dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
-                setScreen('entry')
+                returnToEntry('')
               }}
             >
               Voltar
@@ -581,7 +628,8 @@ export default function App() {
         account={sessionUser}
         csrfToken={csrfToken}
         editor={authorWork?.accountId === sessionUser.id ? authorWork.editor : null}
-        setEditor={(editor) => setAuthorWork(editor ? { accountId: sessionUser.id, editor } : null)}
+        initialPuzzleId={authState.intendedTarget?.puzzleId}
+        setEditor={setAuthorEditor}
         onEntry={() => returnToEntry('')}
         onLogout={handleLogout}
         onIdentityRequired={reidentifyAuthor}

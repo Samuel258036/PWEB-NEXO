@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import DraftForm from './AuthorDraft.jsx'
 import AuthorPublished from './AuthorPublished.jsx'
+import { LOGOUT_FAILED } from './identification.js'
 import { acceptPublishedResult, confirmAuthorDiscard, createEditor, draftPayload, hasAuthorChanges, publishedRequest } from './author-editor.js'
 
 async function authorRequest(path, { csrfToken, method = 'GET', body, headers, signal } = {}) {
@@ -22,8 +23,9 @@ async function authorRequest(path, { csrfToken, method = 'GET', body, headers, s
   return data
 }
 
-export default function AuthorArea({ account, csrfToken, editor, setEditor, onEntry, onLogout, onIdentityRequired, onCsrfToken }) {
+export default function AuthorArea({ account, csrfToken, editor, initialPuzzleId, setEditor, onEntry, onLogout, onIdentityRequired, onCsrfToken }) {
   const [puzzles, setPuzzles] = useState(null)
+  const [requestedPuzzleId, setRequestedPuzzleId] = useState(() => editor ? null : initialPuzzleId)
   const [pending, setPending] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [listRequest, setListRequest] = useState(0)
@@ -71,11 +73,22 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
   useEffect(() => {
     if (!isListing) return
     const controller = new AbortController()
-    authorRequest('/puzzles', { signal: controller.signal })
-      .then((data) => setPuzzles(data.puzzles))
-      .catch((error) => showRequestError(error, controller.signal))
+    const path = requestedPuzzleId ? '/puzzles/' + requestedPuzzleId : '/puzzles'
+    authorRequest(path, { signal: controller.signal })
+      .then((data) => {
+        if (requestedPuzzleId) {
+          setEditor(createEditor(data.puzzle))
+          setRequestedPuzzleId(null)
+        } else {
+          setPuzzles(data.puzzles)
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted && error.status === 404) setRequestedPuzzleId(null)
+        return showRequestError(error, controller.signal)
+      })
     return () => controller.abort()
-  }, [isListing, listRequest, showRequestError])
+  }, [isListing, listRequest, requestedPuzzleId, setEditor, showRequestError])
 
   useEffect(() => () => activeRequest.current?.abort(), [])
 
@@ -204,6 +217,7 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
           <p className="nexo-status">Conta: {account.usernameDisplay}</p>
           <div className="nexo-actions">
             <button type="button" className="nexo-btn-primary" disabled={pending} onClick={() => {
+              setRequestedPuzzleId(null)
               setFeedback(null)
               setEditor(createEditor())
             }}>Criar um novo nexo</button>
@@ -266,7 +280,9 @@ export default function AuthorArea({ account, csrfToken, editor, setEditor, onEn
           <button type="button" className="nexo-btn-secondary" disabled={pending} onClick={onEntry}>Trocar destino</button>
         )}
         <button type="button" className="nexo-btn-secondary" disabled={pending} onClick={() => {
-          if (confirmAuthorDiscard(editor)) run(onLogout)
+          if (confirmAuthorDiscard(editor)) run(async () => {
+            if (!await onLogout()) setFeedback({ error: true, message: LOGOUT_FAILED })
+          })
         }}>Sair</button>
       </div>
     </main>

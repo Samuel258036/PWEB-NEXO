@@ -1,4 +1,5 @@
 export const DISCREET_AUTHOR_COMMAND = 'acessar o nexo'
+export const LOGOUT_FAILED = 'Não foi possível encerrar a sessão. Tente novamente.'
 
 export const IDENTIFY_MESSAGES = {
   entryPrompt: 'O que você busca?',
@@ -16,6 +17,16 @@ export function resolveDestinationFromIntent(rawIntent) {
     return { kind: 'author', label: 'Área de criação' }
   }
   return { kind: 'play', name: trimmed, label: trimmed }
+}
+
+export function resolveDirectAuthorTarget(pathname) {
+  const route = /^\/nexo(?:\/(novo|[1-9]\d*))?\/?$/.exec(pathname)
+  if (!route) return null
+  const selection = route[1]
+  if (selection === 'novo') return { kind: 'author', newDraft: true }
+  if (!selection) return { kind: 'author' }
+  const puzzleId = Number(selection)
+  return Number.isSafeInteger(puzzleId) ? { kind: 'author', puzzleId } : null
 }
 
 export function createInitialIdentificationState(intendedTarget = null) {
