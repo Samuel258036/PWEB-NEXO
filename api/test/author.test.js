@@ -88,6 +88,63 @@ test('rascunho salva snapshot com IDs estáveis, renomeia e ordena etapas', asyn
   assert.equal(rejected.status, 404)
 })
 
+test('primeiro salvamento e alterações do rascunho preservam conteúdo e identidades em uma transação', async (context) => {
+  const { origin } = await setup(context)
+  const author = await login(origin, 'autora')
+  const other = await login(origin, 'jogadora')
+  const path = '/api/author/puzzles'
+  const created = await authorRequest(origin, author, path, 'POST', {
+    name: '  Portal  ',
+    finalMessage: 'Fim do portal.',
+    steps: [
+      { prompt: 'Substituir esta etapa' },
+      { prompt: 'Manter', answer: 'queda', hints: [{ text: 'Primeira' }, { text: 'Segunda' }] },
+    ],
+  })
+  assert.equal(created.status, 201)
+  const puzzle = created.body.puzzle
+  const savedStep = puzzle.steps[1]
+  const [firstHint, secondHint] = savedStep.hints
+  assert.equal(puzzle.name_display, 'Portal')
+  assert.equal(puzzle.final_message, 'Fim do portal.')
+  assert.equal((await authorRequest(origin, other, path, 'POST', { name: ' PORTAL ' })).status, 409)
+
+  const invalid = await authorRequest(origin, other, path, 'POST', {
+    name: 'Reserva provisória',
+    steps: [{ hints: [firstHint] }],
+  })
+  assert.equal(invalid.status, 404)
+  assert.equal((await authorRequest(origin, other, path)).body.puzzles.length, 0)
+  assert.equal((await authorRequest(origin, other, path, 'POST', { name: 'Reserva provisória' })).status, 201)
+
+  const update = { name: 'Portal', version: puzzle.version }
+  const pathToDraft = path + '/' + puzzle.id + '/draft'
+  const reordered = await authorRequest(origin, author, pathToDraft, 'PUT', {
+    ...update,
+    steps: [{ id: savedStep.id, hints: [secondHint, firstHint] }],
+  })
+  assert.equal(reordered.status, 400)
+  assert.ok(reordered.body.error.fields['steps.0.hints'])
+
+  const replaced = await authorRequest(origin, author, pathToDraft, 'PUT', {
+    ...update,
+    finalMessage: 'Conclusão revisada.',
+    steps: [{ prompt: 'Nova etapa' }, {
+      id: savedStep.id, prompt: 'Manter', answer: 'queda',
+      hints: [{ id: secondHint.id, text: 'Segunda revisada' }, { text: 'Acrescentada' }],
+    }],
+  })
+  assert.equal(replaced.status, 200)
+  const resumed = await authorRequest(origin, author, path + '/' + puzzle.id)
+  assert.equal(resumed.body.puzzle.final_message, 'Conclusão revisada.')
+  assert.notEqual(resumed.body.puzzle.steps[0].id, puzzle.steps[0].id)
+  assert.equal(resumed.body.puzzle.steps[1].id, savedStep.id)
+  assert.deepEqual(resumed.body.puzzle.steps[1].hints.map((hint) => [hint.position, hint.text]), [
+    [1, 'Segunda revisada'], [2, 'Acrescentada'],
+  ])
+  assert.equal(resumed.body.puzzle.steps[1].hints[0].id, secondHint.id)
+})
+
 test('publicação exige snapshot completo e congela a estrutura do rascunho', async (context) => {
   const { origin } = await setup(context)
   const author = await login(origin, 'autora')

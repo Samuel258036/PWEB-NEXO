@@ -245,6 +245,73 @@ body {
   color: var(--nexo-danger);
 }
 
+.nexo-author-list {
+  list-style: none;
+  padding: 0;
+}
+
+.nexo-author-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--nexo-space-3);
+  justify-content: space-between;
+  padding-block: var(--nexo-space-4);
+  border-bottom: 1px solid var(--nexo-line);
+}
+
+.nexo-author-item {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nexo-author-item .nexo-status {
+  margin: 0;
+}
+
+.nexo-author-form,
+.nexo-author-section {
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.nexo-author-form {
+  padding: 0;
+  border: 0;
+}
+
+.nexo-author-section {
+  padding: var(--nexo-space-4);
+  margin-block: var(--nexo-space-4);
+  border: 1px solid var(--nexo-line);
+  border-radius: var(--nexo-radius);
+}
+
+.nexo-author-legend,
+.nexo-author-subheading {
+  color: var(--nexo-accent);
+  font-size: 1.125rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.nexo-author-field,
+.nexo-author-hint {
+  margin-block: var(--nexo-space-4);
+}
+
+.nexo-author-input {
+  border: 1px solid var(--nexo-control-border);
+  border-radius: var(--nexo-radius);
+  background-color: var(--nexo-bg);
+}
+
+textarea.nexo-author-input {
+  display: block;
+  resize: vertical;
+}
+
 :focus-visible {
   outline: 2px solid var(--nexo-focus);
   outline-offset: 3px;

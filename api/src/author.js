@@ -1,13 +1,86 @@
 import express from 'express'
-import { validateAnswer, validateFinalMessage, validateHint, validatePrompt, validatePuzzleName, validateStepCount } from './validation.js'
+import { ValidationError, validateAnswer, validateFinalMessage, validateHint, validateHintCount, validatePrompt, validatePuzzleName, validateStepCount } from './validation.js'
 import { RepositoryReferenceError, VersionConflictError } from './repositories.js'
 
-function sendError(response, status, code, message) {
-  response.status(status).json({ error: { code, message } })
+function sendError(response, status, code, message, fields) {
+  response.status(status).json({ error: { code, message, fields } })
+}
+
+function atField(field, validate) {
+  try {
+    return validate()
+  } catch (error) {
+    if (error instanceof ValidationError) error.field = field
+    throw error
+  }
+}
+
+function readItems(items, field, validateCount, readItem) {
+  if (!Array.isArray(items)) throw new ValidationError(field, 'Envie uma lista.')
+  atField(field, () => validateCount(items.length))
+  const seen = new Set()
+  return items.map((item, index) => {
+    const path = `${field}.${index}`
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new ValidationError(path, 'Envie um objeto.')
+    }
+    if (item.id !== undefined) {
+      if (!Number.isSafeInteger(item.id) || item.id < 1 || seen.has(item.id)) {
+        throw new ValidationError(path, 'O identificador deve ser positivo e único na lista.')
+      }
+      seen.add(item.id)
+    }
+    return readItem(item, path)
+  })
+}
+
+function readDraftSteps(steps) {
+  return readItems(steps, 'steps', validateStepCount, (step, path) => {
+    const prompt = atField(`${path}.prompt`, () => validatePrompt(step.prompt ?? ''))
+    const answer = atField(`${path}.answer`, () => validateAnswer(step.answer ?? '', { allowEmpty: true }))
+    const hints = step.hints === undefined ? undefined : readItems(step.hints, `${path}.hints`, validateHintCount, (hint, hintPath) => ({
+      id: hint.id,
+      text: atField(`${hintPath}.text`, () => validateHint(hint.text)),
+    }))
+    return { id: step.id, prompt, answerText: answer.text, answerKey: answer.key, hints }
+  })
 }
 
 export function createAuthorRouter({ repositories }) {
   const router = express.Router()
+
+  function saveDraft(request, response, puzzleId) {
+    const body = request.body
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      sendError(response, 400, 'INVALID_BODY', 'Envie um objeto JSON válido.')
+      return
+    }
+    if (puzzleId && (!Number.isSafeInteger(body.version) || body.version < 1)) {
+      sendError(response, 400, 'INVALID_VERSION', 'Informe a versão atual do rascunho.')
+      return
+    }
+
+    try {
+      const name = validatePuzzleName(body.name)
+      const steps = readDraftSteps(body.steps === undefined && !puzzleId ? [] : body.steps)
+      const finalMessage = body.finalMessage === undefined ? undefined : validateFinalMessage(body.finalMessage)
+      const snapshot = { authorId: request.session.userId, nameDisplay: name.display, nameKey: name.key, finalMessage, steps }
+      const puzzle = puzzleId
+        ? repositories.puzzles.saveDraftSnapshot({ ...snapshot, puzzleId, expectedVersion: body.version })
+        : repositories.puzzles.createDraftSnapshot(snapshot)
+      response.status(puzzleId ? 200 : 201).json({ puzzle })
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        sendError(response, error.code === 'NAME_TAKEN' ? 409 : 400, error.code, error.message, { [error.field]: error.message })
+      } else if (error instanceof RepositoryReferenceError) {
+        sendError(response, 404, error.code, error.message)
+      } else if (error instanceof VersionConflictError) {
+        sendError(response, 409, error.code, error.message)
+      } else {
+        throw error
+      }
+    }
+  }
 
   router.get('/puzzles', (request, response) => {
     const puzzles = repositories.puzzles.listForAuthor(request.session.userId)
@@ -16,27 +89,7 @@ export function createAuthorRouter({ repositories }) {
   })
 
   router.post('/puzzles', (request, response) => {
-    if (!request.body || typeof request.body !== 'object' || Array.isArray(request.body)) {
-      sendError(response, 400, 'INVALID_BODY', 'Envie um objeto JSON válido.')
-      return
-    }
-
-    let name
-    try {
-      name = validatePuzzleName(request.body.name)
-    } catch (error) {
-      if (error?.code !== 'INVALID_FIELD') throw error
-      sendError(response, 400, error.code, error.message)
-      return
-    }
-
-    try {
-      const result = repositories.puzzles.create({ authorId: request.session.userId, nameDisplay: name.display, nameKey: name.key })
-      response.status(201).json({ puzzle: repositories.puzzles.readForAuthor(result.lastInsertRowid, request.session.userId) })
-    } catch (error) {
-      if (error.code !== 'SQLITE_CONSTRAINT_UNIQUE') throw error
-      sendError(response, 409, 'NAME_TAKEN', 'Já existe um enigma com esse nome.')
-    }
+    saveDraft(request, response)
   })
 
   router.get('/puzzles/:id', (request, response) => {
@@ -57,49 +110,11 @@ export function createAuthorRouter({ repositories }) {
 
   router.put('/puzzles/:id/draft', (request, response) => {
     const puzzleId = Number(request.params.id)
-    const body = request.body
-    if (!Number.isSafeInteger(puzzleId) || puzzleId < 1 || !body || typeof body !== 'object' || Array.isArray(body)) {
-      sendError(response, 400, 'INVALID_BODY', 'Envie um objeto JSON válido.')
+    if (!Number.isSafeInteger(puzzleId) || puzzleId < 1) {
+      sendError(response, 404, 'NOT_FOUND', 'Enigma não encontrado.')
       return
     }
-
-    try {
-      const name = validatePuzzleName(body.name)
-      validateStepCount(body.steps?.length)
-      if (!Array.isArray(body.steps)) throw new Error('steps deve ser uma lista.')
-      const seenIds = new Set()
-      const steps = body.steps.map((step) => {
-        if (!step || typeof step !== 'object' || Array.isArray(step)) throw new Error('Cada etapa deve ser um objeto.')
-        if (step.id !== undefined && (!Number.isSafeInteger(step.id) || step.id < 1 || seenIds.has(step.id))) {
-          throw new Error('IDs de etapa devem ser únicos e positivos.')
-        }
-        if (step.id !== undefined) seenIds.add(step.id)
-        const prompt = validatePrompt(step.prompt ?? '')
-        const answer = validateAnswer(step.answer ?? '', { allowEmpty: true })
-        return { id: step.id, prompt, answerText: answer.text, answerKey: answer.key }
-      })
-      if (!Number.isSafeInteger(body.version) || body.version < 1) {
-        sendError(response, 400, 'INVALID_VERSION', 'Informe a versão atual do rascunho.')
-        return
-      }
-      const puzzle = repositories.puzzles.saveDraftSnapshot({
-        puzzleId, authorId: request.session.userId, expectedVersion: body.version,
-        nameDisplay: name.display, nameKey: name.key, steps,
-      })
-      response.json({ puzzle })
-    } catch (error) {
-      if (error?.code === 'INVALID_FIELD' || error instanceof Error && !error.code) {
-        sendError(response, 400, 'INVALID_FIELD', error.message)
-      } else if (error instanceof RepositoryReferenceError) {
-        sendError(response, 404, error.code, error.message)
-      } else if (error instanceof VersionConflictError) {
-        sendError(response, 409, error.code, error.message)
-      } else if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        sendError(response, 409, 'NAME_TAKEN', 'Já existe um enigma com esse nome.')
-      } else {
-        throw error
-      }
-    }
+    saveDraft(request, response, puzzleId)
   })
 
   router.post('/puzzles/:id/publish', (request, response) => {

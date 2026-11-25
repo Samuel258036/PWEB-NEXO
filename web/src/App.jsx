@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
+import AuthorArea from './AuthorArea.jsx'
 import {
   IDENTIFY_MESSAGES,
   createInitialIdentificationState,
@@ -16,6 +17,7 @@ export default function App() {
   const [csrfToken, setCsrfToken] = useState('')
   const [sessionUser, setSessionUser] = useState(null)
   const [playState, setPlayState] = useState(null)
+  const [authorWork, setAuthorWork] = useState(null)
   const [statusMessage, setStatusMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [playPendingMessage, setPlayPendingMessage] = useState('')
@@ -365,6 +367,7 @@ export default function App() {
   function returnToEntry(message) {
     cancelPlayRequest()
     setPlayState(null)
+    setAuthorWork(null)
     setEntryValue('')
     setInputValue('')
     setErrorMessage('')
@@ -548,30 +551,17 @@ export default function App() {
     )
   }
 
-  if (screen === 'author') {
+  if (screen === 'author' && sessionUser) {
     return (
-      <main className="nexo-shell">
-        <h1 className="nexo-prompt-heading">Seus enigmas</h1>
-        {sessionUser && (
-          <p className="nexo-status">Conta: {sessionUser.usernameDisplay}</p>
-        )}
-        <div className="nexo-actions nexo-navigation">
-          <button
-            type="button"
-            className="nexo-btn-secondary"
-            onClick={() => setScreen('entry')}
-          >
-            Trocar destino
-          </button>
-          <button
-            type="button"
-            className="nexo-btn-secondary"
-            onClick={handleLogout}
-          >
-            Sair
-          </button>
-        </div>
-      </main>
+      <AuthorArea
+        key={sessionUser.id}
+        account={sessionUser}
+        csrfToken={csrfToken}
+        editor={authorWork?.accountId === sessionUser.id ? authorWork.editor : null}
+        setEditor={(editor) => setAuthorWork(editor ? { accountId: sessionUser.id, editor } : null)}
+        onEntry={() => returnToEntry('')}
+        onLogout={handleLogout}
+      />
     )
   }
 

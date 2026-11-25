@@ -14,10 +14,14 @@ Lista somente os itens do autor atual:
 
 ### `POST /puzzles`
 
-Reserva o nome ao criar o rascunho. Retorna `201` e o snapshot vazio:
+Reserva o nome ao criar o rascunho e retorna `201` com o snapshot salvo. `steps` e `finalMessage` são opcionais. O primeiro salvamento persiste todos os campos enviados em uma transação.
 
 ```json
-{ "name": "Meu enigma" }
+{
+  "name": "Meu enigma",
+  "finalMessage": "Você chegou ao fim.",
+  "steps": [{ "prompt": "Leia a pista", "answer": "", "hints": [{ "text": "Consulte o mapa" }] }]
+}
 ```
 
 Nome inválido retorna `400 INVALID_FIELD`; nome reservado retorna `409 NAME_TAKEN`.
@@ -41,7 +45,9 @@ Salva o snapshot inteiro. Etapas existentes enviam seu `id`; etapas novas omitem
 }
 ```
 
-O exemplo preserva a etapa 31 e acrescenta uma etapa. Campos incompletos são aceitos enquanto rascunho. IDs de outra etapa/enigma retornam `404 INVALID_REFERENCE`; versão antiga retorna `409 VERSION_CONFLICT`; nome ocupado retorna `409 NAME_TAKEN`. Dicas existentes são preservadas para etapas com ID; dicas não são reordenadas por este snapshot.
+O exemplo preserva a etapa 31 e acrescenta uma etapa. Campos incompletos são aceitos enquanto rascunho. IDs de outra etapa ou enigma retornam `404 INVALID_REFERENCE`. Versão antiga retorna `409 VERSION_CONFLICT`. Nome ocupado retorna `409 NAME_TAKEN`.
+
+Omitir `finalMessage` ou `hints` preserva os valores já salvos. Envie `finalMessage: ""` para limpar a mensagem ou `hints: []` para remover as dicas daquela etapa. Dicas existentes usam seu `id` e conservam a ordem relativa. Dicas novas omitem o ID e entram no final. Erros de campo incluem `error.fields` com caminhos como `name` ou `steps.0.hints.0.text`.
 
 ## Publicação e manutenção
 

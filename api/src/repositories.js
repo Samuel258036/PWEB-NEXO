@@ -1,4 +1,5 @@
 import { runInImmediateTransaction } from './transactions.js'
+import { ValidationError } from './validation.js'
 
 export class StaleProgressError extends Error {
   constructor(play = null) {
@@ -104,8 +105,8 @@ export function createRepositories(database) {
   `)
 
   const insertPuzzle = database.prepare(`
-    INSERT INTO puzzles (author_id, name_display, name_key)
-    VALUES (@authorId, @nameDisplay, @nameKey)
+    INSERT INTO puzzles (author_id, name_display, name_key, final_message)
+    VALUES (@authorId, @nameDisplay, @nameKey, @finalMessage)
   `)
   const findPuzzleByIdAndAuthor = database.prepare(`
     SELECT id, author_id, name_display, name_key, status, final_message, version,
@@ -119,6 +120,7 @@ export function createRepositories(database) {
     FROM puzzles WHERE author_id = ? ORDER BY updated_at DESC, id DESC
   `)
   const findPuzzleByIdAndAuthorForRead = findPuzzleByIdAndAuthor
+  const findPuzzleIdByNameKey = database.prepare('SELECT id FROM puzzles WHERE name_key = ?')
   const findPublishedPuzzleByNameKey = database.prepare(`
     SELECT id, author_id, name_display, name_key, status, final_message, version,
            created_at, updated_at, published_at
@@ -138,7 +140,8 @@ export function createRepositories(database) {
   const insertDraftStep = database.prepare(`INSERT INTO steps (puzzle_id, position, prompt, answer_text, answer_key) VALUES (?, ?, ?, ?, ?)`)
   const updateDraftStep = database.prepare(`UPDATE steps SET position = ?, prompt = ?, answer_text = ?, answer_key = ? WHERE id = ? AND puzzle_id = ?`)
   const deleteUnlistedDraftSteps = database.prepare(`DELETE FROM steps WHERE puzzle_id = ? AND id NOT IN (SELECT value FROM json_each(?))`)
-  const updateDraftSnapshot = database.prepare(`UPDATE puzzles SET name_display = ?, name_key = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
+  const updateDraftSnapshot = database.prepare(`UPDATE puzzles SET name_display = ?, name_key = ?, final_message = COALESCE(?, final_message), version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
+  const updateDraftHint = database.prepare('UPDATE hints SET text = ?, position = ? WHERE id = ?')
   const readDraftForPublish = database.prepare(`SELECT puzzles.id, puzzles.version, puzzles.status, puzzles.final_message, COUNT(steps.id) AS step_count, SUM(CASE WHEN trim(steps.prompt) = '' OR trim(steps.answer_text) = '' THEN 1 ELSE 0 END) AS incomplete_steps FROM puzzles LEFT JOIN steps ON steps.puzzle_id = puzzles.id WHERE puzzles.id = ? AND puzzles.author_id = ? GROUP BY puzzles.id`)
   const publishDraft = database.prepare(`UPDATE puzzles SET status = 'published', published_at = CURRENT_TIMESTAMP, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'draft' AND version = ?`)
   const updateFinalMessage = database.prepare(`UPDATE puzzles SET final_message = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND author_id = ? AND status = 'published' AND version = ?`)
@@ -291,6 +294,61 @@ export function createRepositories(database) {
     WHERE id = ? AND user_id = ? AND version = ?
   `)
 
+  function checkDraftName(nameKey, puzzleId) {
+    const owner = findPuzzleIdByNameKey.get(nameKey)
+    if (owner && owner.id !== puzzleId) {
+      const error = new ValidationError('name', 'Já existe um enigma com esse nome.')
+      error.code = 'NAME_TAKEN'
+      throw error
+    }
+  }
+
+  function writeDraftHints(stepId, hints, field) {
+    const current = findHintsByStep.all(stepId)
+    const retained = new Set()
+    let previousPosition = 0
+    for (const hint of hints) {
+      if (hint.id === undefined) {
+        previousPosition = Infinity
+        continue
+      }
+      const saved = current.find((item) => item.id === hint.id)
+      if (!saved) throw new RepositoryReferenceError('alterar uma dica')
+      if (saved.position <= previousPosition) {
+        throw new ValidationError(field, 'Mantenha a ordem das dicas existentes e acrescente novas ao final.')
+      }
+      retained.add(hint.id)
+      previousPosition = saved.position
+    }
+
+    for (const hint of current) {
+      if (!retained.has(hint.id)) deleteHint.run(hint.id)
+    }
+    hints.forEach((hint, index) => {
+      if (hint.id === undefined) insertHint.run(stepId, hint.text, stepId)
+      else updateDraftHint.run(hint.text, index + 1, hint.id)
+    })
+  }
+
+  function writeDraftSteps(puzzleId, steps) {
+    const retainedIds = steps.flatMap((step) => step.id === undefined ? [] : [step.id])
+    for (const stepId of retainedIds) {
+      if (!findOwnedStep.get(stepId, puzzleId)) throw new RepositoryReferenceError('alterar uma etapa')
+    }
+    deleteUnlistedDraftSteps.run(puzzleId, JSON.stringify(retainedIds))
+    for (const stepId of retainedIds) shiftStepPosition.run(1000 + stepId, stepId, puzzleId)
+    steps.forEach((step, index) => {
+      const position = index + 1
+      let stepId = step.id
+      if (stepId === undefined) {
+        stepId = Number(insertDraftStep.run(puzzleId, position, step.prompt, step.answerText, step.answerKey).lastInsertRowid)
+      } else {
+        updateDraftStep.run(position, step.prompt, step.answerText, step.answerKey, stepId, puzzleId)
+      }
+      if (step.hints !== undefined) writeDraftHints(stepId, step.hints, `steps.${index}.hints`)
+    })
+  }
+
   function buildPlayDto(userId, puzzleId) {
     const state = findPlayStateByUserAndPuzzle.get(userId, puzzleId)
     if (!state) return null
@@ -349,7 +407,15 @@ export function createRepositories(database) {
         return listPuzzlesByAuthor.all(authorId)
       },
       create({ authorId, nameDisplay, nameKey }) {
-        return insertPuzzle.run({ authorId, nameDisplay, nameKey })
+        return insertPuzzle.run({ authorId, nameDisplay, nameKey, finalMessage: null })
+      },
+      createDraftSnapshot({ authorId, nameDisplay, nameKey, finalMessage = null, steps }) {
+        return runInImmediateTransaction(database, () => {
+          checkDraftName(nameKey)
+          const { lastInsertRowid } = insertPuzzle.run({ authorId, nameDisplay, nameKey, finalMessage })
+          writeDraftSteps(Number(lastInsertRowid), steps)
+          return this.readForAuthor(lastInsertRowid, authorId)
+        })
       },
       findByIdForAuthor(puzzleId, authorId) {
         return findPuzzleByIdAndAuthor.get(puzzleId, authorId)
@@ -366,31 +432,16 @@ export function createRepositories(database) {
         }))
         return { ...puzzle, steps }
       },
-      saveDraftSnapshot({ puzzleId, authorId, expectedVersion, nameDisplay, nameKey, steps }) {
+      saveDraftSnapshot({ puzzleId, authorId, expectedVersion, nameDisplay, nameKey, finalMessage = null, steps }) {
         return runInImmediateTransaction(database, () => {
           const puzzle = findDraftForSave.get(puzzleId, authorId)
           if (!puzzle) throw new RepositoryReferenceError('salvar o rascunho')
           if (puzzle.status !== 'draft') throw new RepositoryReferenceError('alterar um enigma publicado')
           if (puzzle.version !== expectedVersion) throw new VersionConflictError()
 
-          const positions = steps.map((step) => step.id).filter(Boolean)
-          for (const stepId of positions) {
-            if (!findOwnedStep.get(stepId, puzzleId)) throw new RepositoryReferenceError('alterar uma etapa')
-          }
-          for (const stepId of positions) shiftStepPosition.run(1000 + stepId, stepId, puzzleId)
-          const savedIds = []
-          steps.forEach((step, index) => {
-            const position = index + 1
-            if (step.id) {
-              updateDraftStep.run(position, step.prompt, step.answerText, step.answerKey, step.id, puzzleId)
-              savedIds.push(step.id)
-            } else {
-              const result = insertDraftStep.run(puzzleId, position, step.prompt, step.answerText, step.answerKey)
-              savedIds.push(Number(result.lastInsertRowid))
-            }
-          })
-          deleteUnlistedDraftSteps.run(puzzleId, JSON.stringify(savedIds))
-          const changed = updateDraftSnapshot.run(nameDisplay, nameKey, puzzleId, authorId, expectedVersion)
+          checkDraftName(nameKey, puzzleId)
+          writeDraftSteps(puzzleId, steps)
+          const changed = updateDraftSnapshot.run(nameDisplay, nameKey, finalMessage, puzzleId, authorId, expectedVersion)
           if (changed.changes !== 1) throw new VersionConflictError()
           return this.readForAuthor(puzzleId, authorId)
         })
