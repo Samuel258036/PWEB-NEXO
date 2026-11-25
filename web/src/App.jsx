@@ -203,8 +203,10 @@ export default function App() {
 
   const currentStepId = playState?.currentStep?.id
   const playStatus = playState?.status
+  const isSubmittingIdentity = authState.phase === 'submitting'
+  const isPasswordPhase = authState.phase === 'password' || (isSubmittingIdentity && authState.mode !== null)
   useEffect(() => {
-    if (screen === 'identify' && authState.phase === 'password') {
+    if (screen === 'identify' && isPasswordPhase) {
       passwordRef.current?.focus()
       return
     }
@@ -213,7 +215,7 @@ export default function App() {
       return
     }
     inputRef.current?.focus()
-  }, [screen, authState.phase, currentStepId, playStatus])
+  }, [screen, authState.phase, isPasswordPhase, currentStepId, playStatus])
 
   async function handleEntrySubmit(event) {
     event.preventDefault()
@@ -239,6 +241,7 @@ export default function App() {
 
   async function handleRevealHint() {
     if (!playState?.currentStep) return
+    inputRef.current?.focus()
 
     await requestPlay({
       path: `/${playState.puzzle.id}/hints/reveal`,
@@ -400,6 +403,7 @@ export default function App() {
     }
 
     if (playRequestRef.current) return
+    inputRef.current?.focus()
 
     if (normalizedCommand === '/dica') {
       setInputValue('')
@@ -481,7 +485,7 @@ export default function App() {
   }
 
   if (screen === 'identify') {
-    const isPasswordPhase = authState.phase === 'password'
+    const showSignupNotice = authState.phase === 'confirm_new' || (isPasswordPhase && authState.mode === 'register')
     const activeLabel = authState.phase === 'confirm_new'
       ? IDENTIFY_MESSAGES.confirmNewAccount
       : isPasswordPhase
@@ -509,7 +513,8 @@ export default function App() {
                 value={passwordValue}
                 onChange={(event) => setPasswordValue(event.target.value)}
                 autoComplete={authState.mode === 'register' ? 'new-password' : 'current-password'}
-                disabled={authState.phase === 'submitting'}
+                readOnly={isSubmittingIdentity}
+                aria-describedby={showSignupNotice ? 'signup-notice' : undefined}
               />
             ) : (
               <input
@@ -520,12 +525,15 @@ export default function App() {
                 value={inputValue}
                 onChange={(event) => setInputValue(event.target.value)}
                 autoComplete={authState.phase === 'username' ? 'username' : 'off'}
-                disabled={authState.phase === 'submitting'}
+                readOnly={isSubmittingIdentity}
+                aria-describedby={showSignupNotice ? 'signup-notice' : undefined}
               />
             )}
           </div>
 
-          {authState.phase === 'submitting' && (
+          {showSignupNotice && <p id="signup-notice" className="nexo-warning">Guarde sua senha. O Nexo não oferece recuperação de acesso.</p>}
+
+          {isSubmittingIdentity && (
             <p className="nexo-status" role="status">Verificando…</p>
           )}
 
@@ -541,13 +549,14 @@ export default function App() {
             <button
               type="submit"
               className="nexo-btn-primary"
-              disabled={authState.phase === 'submitting'}
+              disabled={isSubmittingIdentity}
             >
               Continuar
             </button>
             <button
               type="button"
               className="nexo-btn-secondary"
+              disabled={isSubmittingIdentity}
               onClick={() => {
                 if (!confirmAuthorDiscard(authorWork?.editor)) return
                 setAuthorWork(null)

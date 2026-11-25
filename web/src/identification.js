@@ -66,6 +66,7 @@ export function identificationReducer(state, event) {
       return {
         ...state,
         phase: 'submitting',
+        mode: null,
         username: trimmed,
         confirmedNew: false,
         error: null,
@@ -132,12 +133,15 @@ export function identificationReducer(state, event) {
     }
 
     case 'AUTH_FAILED': {
+      if (event.code === 'NAME_TAKEN') {
+        return { ...createInitialIdentificationState(state.intendedTarget), error: event.message }
+      }
       const fallbackPhase = state.mode === 'register'
         ? (state.confirmedNew ? 'password' : 'confirm_new')
-        : 'password'
+        : (state.mode === 'login' ? 'password' : 'username')
       return {
         ...state,
-        phase: event.code === 'NAME_TAKEN' ? 'username' : fallbackPhase,
+        phase: fallbackPhase,
         error: event.message || 'Não foi possível concluir a identificação.',
       }
     }

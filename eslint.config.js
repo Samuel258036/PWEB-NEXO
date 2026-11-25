@@ -12,6 +12,10 @@ export default defineConfig([
     languageOptions: { globals: globals.node },
   },
   {
+    files: ['e2e/**/*.spec.js'],
+    languageOptions: { globals: globals.browser },
+  },
+  {
     files: ['web/src/**/*.{js,jsx}'],
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
     languageOptions: { globals: globals.browser },
