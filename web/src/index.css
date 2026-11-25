@@ -307,6 +307,10 @@ body {
   background-color: var(--nexo-bg);
 }
 
+.nexo-author-input[aria-invalid="true"] {
+  border-color: var(--nexo-danger);
+}
+
 textarea.nexo-author-input {
   display: block;
   resize: vertical;

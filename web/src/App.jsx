@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import AuthorArea from './AuthorArea.jsx'
+import { confirmAuthorDiscard, hasAuthorChanges } from './author-editor.js'
 import {
   IDENTIFY_MESSAGES,
   createInitialIdentificationState,
@@ -143,39 +144,34 @@ export default function App() {
     })
   }
 
-  const syncSession = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth/session')
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.csrfToken) {
-        setCsrfToken(data.csrfToken)
-      }
-      if (data.user) {
-        setSessionUser(data.user)
-      } else {
-        setSessionUser((prevUser) => {
-          if (prevUser && (screen === 'play' || screen === 'author')) {
-            handleSessionExpired()
-          }
-          return null
-        })
-      }
-    } catch {
-      // ignora falha transitória de rede na verificação silenciosa
-    }
-  }, [handleSessionExpired, screen])
+  const reidentifyAuthor = useCallback((token) => {
+    if (token) setCsrfToken(token)
+    dispatchAuth({ type: 'SET_INTENDED_TARGET', target: { kind: 'author' } })
+    handleSessionExpired()
+  }, [handleSessionExpired])
 
+  const sessionAccountId = sessionUser?.id
   useEffect(() => {
-    let active = true
-    fetch('/api/auth/session')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!active || !data) return
+    let request
+    async function syncSession() {
+      request?.abort()
+      request = new AbortController()
+      const { signal } = request
+      try {
+        const res = await fetch('/api/auth/session', { signal })
+        if (!res.ok) return
+        const data = await res.json()
+        if (signal.aborted) return
         if (data.csrfToken) setCsrfToken(data.csrfToken)
+        if ((screen === 'play' || screen === 'author') && data.user?.id !== sessionAccountId) {
+          handleSessionExpired()
+          return
+        }
         setSessionUser(data.user ?? null)
-      })
-      .catch(() => {})
+      } catch {
+        // A próxima consulta de sessão pode recuperar uma falha transitória.
+      }
+    }
 
     const onFocusOrVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -183,15 +179,27 @@ export default function App() {
       }
     }
 
+    syncSession()
     window.addEventListener('focus', onFocusOrVisibility)
     document.addEventListener('visibilitychange', onFocusOrVisibility)
 
     return () => {
-      active = false
+      request?.abort()
       window.removeEventListener('focus', onFocusOrVisibility)
       document.removeEventListener('visibilitychange', onFocusOrVisibility)
     }
-  }, [syncSession])
+  }, [handleSessionExpired, screen, sessionAccountId])
+
+  const authorHasChanges = hasAuthorChanges(authorWork?.editor)
+  useEffect(() => {
+    if (!authorHasChanges) return
+    const protectChanges = (event) => {
+      event.preventDefault()
+      event.returnValue = true
+    }
+    window.addEventListener('beforeunload', protectChanges)
+    return () => window.removeEventListener('beforeunload', protectChanges)
+  }, [authorHasChanges])
 
   const currentStepId = playState?.currentStep?.id
   const playStatus = playState?.status
@@ -325,7 +333,10 @@ export default function App() {
 
         const nextCsrf = data.csrfToken || csrfToken
         if (data.csrfToken) setCsrfToken(data.csrfToken)
-        if (data.user) setSessionUser(data.user)
+        if (data.user) {
+          setSessionUser(data.user)
+          setAuthorWork((current) => current?.accountId === data.user.id ? current : null)
+        }
 
         if (authState.intendedTarget) {
           await openDestination(authState.intendedTarget, nextCsrf)
@@ -537,6 +548,8 @@ export default function App() {
               type="button"
               className="nexo-btn-secondary"
               onClick={() => {
+                if (!confirmAuthorDiscard(authorWork?.editor)) return
+                setAuthorWork(null)
                 setInputValue('')
                 setPasswordValue('')
                 dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
@@ -561,6 +574,8 @@ export default function App() {
         setEditor={(editor) => setAuthorWork(editor ? { accountId: sessionUser.id, editor } : null)}
         onEntry={() => returnToEntry('')}
         onLogout={handleLogout}
+        onIdentityRequired={reidentifyAuthor}
+        onCsrfToken={setCsrfToken}
       />
     )
   }

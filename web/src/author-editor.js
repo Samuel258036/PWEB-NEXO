@@ -35,3 +35,13 @@ export function draftPayload({ version, form }) {
     })),
   }
 }
+
+export function hasAuthorChanges(editor) {
+  return Boolean(editor && editor.form !== editor.saved &&
+    JSON.stringify(editor.form) !== JSON.stringify(editor.saved))
+}
+
+export function confirmAuthorDiscard(editor) {
+  return !hasAuthorChanges(editor) ||
+    window.confirm('As alterações desde o último salvamento serão perdidas. Deseja continuar?')
+}
