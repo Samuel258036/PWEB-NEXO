@@ -1,12 +1,21 @@
+export const DISCREET_AUTHOR_COMMAND = 'acessar o nexo'
+
 export const IDENTIFY_MESSAGES = {
   entryPrompt: 'O que você busca?',
   whoAreYou: 'Quem você é?',
-  confirmNewAccount: (username) =>
-    `Não encontrei a conta "${username}". Criar uma nova conta agora? (s/n ou y/n)`,
+  confirmNewAccount: 'Não conhecemos você. Novo por aqui? (y/n)',
   whatIsPassword: 'Qual é a senha?',
-  invalidConfirmation: 'Responda com y/s para confirmar ou n para informar outro nome.',
+  invalidConfirmation: 'Responda com y ou n.',
   emptyUsername: 'Informe quem você é para continuar.',
   emptyPassword: 'Informe a senha para continuar.',
+}
+
+export function resolveDestinationFromIntent(rawIntent) {
+  const trimmed = (rawIntent ?? '').trim()
+  if (trimmed.toLowerCase() === DISCREET_AUTHOR_COMMAND) {
+    return { kind: 'author', label: 'Área de criação' }
+  }
+  return { kind: 'play', name: trimmed, label: trimmed }
 }
 
 export function createInitialIdentificationState(intendedTarget = null) {
@@ -24,7 +33,7 @@ export function createInitialIdentificationState(intendedTarget = null) {
 export function parseConfirmationAnswer(rawValue) {
   if (typeof rawValue !== 'string') return null
   const normalized = rawValue.trim().toLowerCase()
-  if (normalized === 'y' || normalized === 's') return true
+  if (normalized === 'y') return true
   if (normalized === 'n') return false
   return null
 }

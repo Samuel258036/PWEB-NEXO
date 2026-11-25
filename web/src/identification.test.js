@@ -24,15 +24,21 @@ test('exige confirmação antes da senha para nova conta e aceita y/Y/n/N', () =
   })
   assert.equal(confirmPrompt.phase, 'confirm_new')
   assert.equal(confirmPrompt.confirmedNew, false)
-  assert.ok(IDENTIFY_MESSAGES.confirmNewAccount('nova_pessoa').includes('nova_pessoa'))
+  assert.equal(
+    IDENTIFY_MESSAGES.confirmNewAccount,
+    'Não conhecemos você. Novo por aqui? (y/n)',
+  )
 
-  // Resposta inválida mantém confirmação e informa erro
-  const invalidReply = identificationReducer(confirmPrompt, {
-    type: 'CONFIRM_NEW_ANSWER',
-    answer: 'talvez',
-  })
-  assert.equal(invalidReply.phase, 'confirm_new')
-  assert.ok(invalidReply.error)
+  // Respostas diferentes de y/Y/n/N mantêm confirmação e informam erro
+  for (const invalidAnswer of ['talvez', 's', 'S']) {
+    const invalidReply = identificationReducer(confirmPrompt, {
+      type: 'CONFIRM_NEW_ANSWER',
+      answer: invalidAnswer,
+    })
+    assert.equal(invalidReply.phase, 'confirm_new')
+    assert.equal(invalidReply.confirmedNew, false)
+    assert.ok(invalidReply.error)
+  }
 
   // 'n' ou 'N' volta para informar outro nome mantendo o destino
   for (const noAnswer of ['n', 'N']) {

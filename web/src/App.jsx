@@ -3,17 +3,8 @@ import {
   IDENTIFY_MESSAGES,
   createInitialIdentificationState,
   identificationReducer,
+  resolveDestinationFromIntent,
 } from './identification.js'
-
-const DISCREET_AUTHOR_COMMAND = '/autoria'
-
-function resolveDestinationFromIntent(rawIntent) {
-  const trimmed = rawIntent.trim()
-  if (trimmed.toLowerCase() === DISCREET_AUTHOR_COMMAND) {
-    return { kind: 'author', label: 'Área de criação' }
-  }
-  return { kind: 'play', name: trimmed, label: trimmed }
-}
 
 export default function App() {
   const [screen, setScreen] = useState('entry') // 'entry' | 'identify' | 'play' | 'author'
@@ -351,18 +342,6 @@ export default function App() {
     setScreen('entry')
   }
 
-  async function handleSwitchDestination(nextTarget) {
-    dispatchAuth({ type: 'SET_INTENDED_TARGET', target: nextTarget })
-    if (!sessionUser) {
-      setInputValue('')
-      setPasswordValue('')
-      dispatchAuth({ type: 'RESET_TO_USERNAME', notice: null })
-      setScreen('identify')
-      return
-    }
-    await openDestination(nextTarget, csrfToken)
-  }
-
   async function handleAnswerSubmit(event) {
     event.preventDefault()
     if (!playState || playState.status !== 'in_progress' || !playState.currentStep) return
@@ -509,13 +488,6 @@ export default function App() {
             <button
               type="button"
               className="nexo-btn-secondary"
-              onClick={() => handleSwitchDestination({ kind: 'author', label: 'Área de criação' })}
-            >
-              Criar / autoria
-            </button>
-            <button
-              type="button"
-              className="nexo-btn-secondary"
               onClick={handleLogout}
             >
               Sair
@@ -529,7 +501,7 @@ export default function App() {
   if (screen === 'identify') {
     const isPasswordPhase = authState.phase === 'password'
     const activeLabel = authState.phase === 'confirm_new'
-      ? IDENTIFY_MESSAGES.confirmNewAccount(authState.username)
+      ? IDENTIFY_MESSAGES.confirmNewAccount
       : isPasswordPhase
         ? IDENTIFY_MESSAGES.whatIsPassword
         : IDENTIFY_MESSAGES.whoAreYou
@@ -720,6 +692,18 @@ export default function App() {
             >
               Atualizar mensagem
             </button>
+            <button
+              type="button"
+              className="nexo-btn-secondary"
+              onClick={() => {
+                setInputValue('')
+                setErrorMessage('')
+                setStatusMessage('')
+                setScreen('entry')
+              }}
+            >
+              Início
+            </button>
           </div>
         </div>
       )}
@@ -733,13 +717,6 @@ export default function App() {
       )}
 
       <div className="nexo-actions">
-        <button
-          type="button"
-          className="nexo-btn-secondary"
-          onClick={() => handleSwitchDestination({ kind: 'author', label: 'Área de criação' })}
-        >
-          Criar / autoria
-        </button>
         <button
           type="button"
           className="nexo-btn-secondary"

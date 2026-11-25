@@ -3,7 +3,29 @@ import { test } from 'node:test'
 import {
   createInitialIdentificationState,
   identificationReducer,
+  resolveDestinationFromIntent,
 } from './identification.js'
+
+test('reconhece "acessar o nexo" como comando discreto de autoria e trata demais textos como enigmas', () => {
+  assert.deepEqual(resolveDestinationFromIntent('acessar o nexo'), {
+    kind: 'author',
+    label: 'Área de criação',
+  })
+  assert.deepEqual(resolveDestinationFromIntent('  ACESSAR O NEXO  '), {
+    kind: 'author',
+    label: 'Área de criação',
+  })
+  assert.deepEqual(resolveDestinationFromIntent('  Portal  '), {
+    kind: 'play',
+    name: 'Portal',
+    label: 'Portal',
+  })
+  assert.deepEqual(resolveDestinationFromIntent('/autoria'), {
+    kind: 'play',
+    name: '/autoria',
+    label: '/autoria',
+  })
+})
 
 test('preserva destino de jogo ou autoria durante o ciclo de identificação', () => {
   const initial = createInitialIdentificationState({ kind: 'play', name: 'Enigma Central' })
