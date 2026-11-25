@@ -384,6 +384,7 @@ export default function App() {
     setErrorMessage('')
     setStatusMessage(message)
     setScreen('entry')
+    if (screen === 'entry') inputRef.current?.focus()
   }
 
   async function handleAnswerSubmit(event) {

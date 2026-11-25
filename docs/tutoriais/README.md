@@ -36,4 +36,5 @@
 - [7.3. publicar a versão salva do enigma](define-puzzle-platform-mvp/7.3.md)
 - [7.4. manter publicados com controle de versão](define-puzzle-platform-mvp/7.4.md)
 - [7.5. confirmar a exclusão de enigmas](define-puzzle-platform-mvp/7.5.md)
+- [8.1. Testar autoria e jogo em HTTPS](define-puzzle-platform-mvp/8.1.md)
 - [PROC-07. Conferir o novo visual do terminal](PROC-07.md)

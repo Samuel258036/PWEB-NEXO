@@ -16,12 +16,14 @@
     "start": "npm run start --workspace api",
     "migrate": "npm run migrate --workspace api",
     "test": "npm test --workspace api",
+    "test:e2e": "npm run build && playwright test",
     "build": "npm run build --workspace web",
     "lint": "eslint .",
     "preview": "npm run preview --workspace web"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.65.1",
     "eslint": "10.15.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.8",

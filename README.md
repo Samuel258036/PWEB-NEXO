@@ -59,6 +59,10 @@ O servidor também aplica migrações pendentes antes de aceitar requisições. 
 - `web/` contém a interface React e a configuração Vite.
 - `api/` contém a aplicação Express.
 
+## Teste de ponta a ponta
+
+`npm run test:e2e` compila a interface e testa o percurso de autoria e jogo em HTTPS com banco descartável. Instale o navegador e prepare o ambiente conforme o [tutorial do Playwright](docs/tutoriais/define-puzzle-platform-mvp/8.1.md).
+
 Consulte os [tutoriais](docs/tutoriais/README.md) para reproduzir as entregas.
 
 Os contratos de autenticação, cookie e proxy estão na [referência da API de identidade](docs/api-identidade.md).
